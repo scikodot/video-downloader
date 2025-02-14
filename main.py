@@ -40,14 +40,17 @@ def main():
     parser.add_argument('-v', '--verbose', help="Show debug info", action='store_true')
     args = parser.parse_args()
 
-    if args.verbose:
-        print("Args: ", vars(args), end='\n')
-
     if args.output_path is None:
         args.output_path = get_default_output_path()
 
-    # Ensure the output path exists
-    os.makedirs(args.output_path, exist_ok=True)
+    if args.verbose:
+        print("Args:", vars(args), end='\n\n')
+
+    # Ensure the output path directory exists.
+    # Use suffix to determine if the path points to a file or a directory.
+    # This correctly assumes that entries like "folder/.ext" have no suffix, i. e. they are directories.
+    output_path_dir = args.output_path if pathlib.Path(args.output_path).suffix == '' else os.path.dirname(args.output_path)
+    os.makedirs(output_path_dir, exist_ok=True)
 
     options = webdriver.ChromeOptions()
     options.add_argument('--headless')  # Hide browser GUI
@@ -76,7 +79,7 @@ def main():
         # TODO: move timeout magic to console args
         urls = WebDriverWait(driver, 20).until(get_av_urls)
         if args.verbose:
-            print("URLs: ", urls, end='\n')
+            print("URLs:", urls, end='\n\n')
     except TimeoutException:
         print("Could not obtain the required URLs. Connection timed out.")
         return
@@ -86,7 +89,7 @@ def main():
     session = requests.Session()
     selenium_user_agent = driver.execute_script("return navigator.userAgent;")
     if args.verbose:
-        print("User agent: ", selenium_user_agent, end='\n')
+        print("User agent:", selenium_user_agent, end='\n\n')
     session.headers.update({'user-agent': selenium_user_agent})
     for cookie in driver.get_cookies():
         session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
@@ -94,7 +97,7 @@ def main():
     # Download files from the obtained URLs, with byte range step of 1 MB, into a temporary directory
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.verbose:
-            print(f"Temporary directory: {temp_dir}")
+            print("Temporary directory:", temp_dir)
 
         bytes_start = 0
         # TODO: move bytes magic to console args
@@ -102,15 +105,15 @@ def main():
         for url, bytes_pos in urls:
             url = url[:bytes_pos] + f'bytes={bytes_start}-{bytes_end}'
             if args.verbose:
-                print("URL: ", url, end='\n')
+                print("URL:", url, end='\n\n')
 
             response = session.get(url)
             if args.verbose:
-                print("Response: ", response, end='\n')
+                print("Response:", response, end='\n\n')
 
             headers = response.headers
             if args.verbose:
-                print("Headers: ", headers, end='\n')
+                print("Headers:", headers, end='\n\n')
 
             content_type = headers.get('Content-Type', '')
             if content_type != 'video/mp4' and content_type != 'audio/mp4':
