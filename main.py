@@ -3,12 +3,22 @@ import os
 import pathlib
 import requests
 import tempfile
+import validators
 from moviepy import VideoFileClip, AudioFileClip
 from selenium import webdriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
 
 def main():
+    def validate_url(url):
+        if not isinstance(url, str):
+            raise ValueError(f"URL must be a string, not {type(url)}.")
+
+        if not validators.url(url):
+            raise ValueError("Invalid URL.")
+        
+        return url
+
     def validate_output_path(path):
         if not isinstance(path, str):
             raise ValueError(f"Output path must be a string, not {type(path)}.")
@@ -20,8 +30,7 @@ def main():
         return path
 
     parser = argparse.ArgumentParser(prog='video-downloader')
-    # TODO: add URL validation
-    parser.add_argument('url', help="Video URL")
+    parser.add_argument('url', help="Video URL", type=validate_url)
     parser.add_argument('-o', '--output-path', help="Output path", type=validate_output_path)
     parser.add_argument('-v', '--verbose', help="Show debug info", action='store_true')
     args = parser.parse_args()
