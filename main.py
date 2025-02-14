@@ -9,31 +9,45 @@ from selenium import webdriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
 
+DEFAULT_OUTPUT_SUBPATH = "output"
+
+def validate_url(url):
+    if not isinstance(url, str):
+        raise ValueError(f"URL must be a string, not {type(url)}.")
+
+    if not validators.url(url):
+        raise ValueError("Invalid URL.")
+    
+    return url
+
+def get_default_output_path():
+    directory = pathlib.Path(__file__).parent.resolve()
+    return os.path.join(directory, DEFAULT_OUTPUT_SUBPATH)
+
+def validate_output_path(output_path):
+    if not isinstance(output_path, str):
+        raise ValueError(f"Output path must be a string, not {type(output_path)}.")
+    
+    if not pathlib.Path(output_path).is_absolute():
+        output_path = os.path.join(get_default_output_path(), output_path)
+    
+    return output_path
+
 def main():
-    def validate_url(url):
-        if not isinstance(url, str):
-            raise ValueError(f"URL must be a string, not {type(url)}.")
-
-        if not validators.url(url):
-            raise ValueError("Invalid URL.")
-        
-        return url
-
-    def validate_output_path(path):
-        if not isinstance(path, str):
-            raise ValueError(f"Output path must be a string, not {type(path)}.")
-        
-        # TODO: add additional validation, like empty check, file extension, etc.
-        
-        dir = pathlib.Path(path).parent.resolve()
-        os.makedirs(dir, exist_ok=True)
-        return path
-
     parser = argparse.ArgumentParser(prog='video-downloader')
     parser.add_argument('url', help="Video URL", type=validate_url)
     parser.add_argument('-o', '--output-path', help="Output path", type=validate_output_path)
     parser.add_argument('-v', '--verbose', help="Show debug info", action='store_true')
     args = parser.parse_args()
+
+    if args.verbose:
+        print("Args: ", vars(args), end='\n')
+
+    if args.output_path is None:
+        args.output_path = get_default_output_path()
+
+    # Ensure the output path exists
+    os.makedirs(args.output_path, exist_ok=True)
 
     options = webdriver.ChromeOptions()
     options.add_argument('--headless')  # Hide browser GUI
