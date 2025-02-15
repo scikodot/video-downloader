@@ -37,20 +37,7 @@ def validate_output_path(output_path):
     
     return output_path
 
-def get_av_urls(drv):
-    WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"))).click()
-    WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']"))).click()
-    quality_sublist = WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
-    quality_items = quality_sublist.find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
-    qualities = set()
-    for quality_item in quality_items:
-        q = int(quality_item.get_attribute('data-value'))
-        if q > 0:
-            qualities.add(q)
-
-    # TODO: add control with --verbose
-    print("Qualities:", ', '.join(f"{q}p" for q in sorted(qualities)))
-    
+def get_av_urls(drv, count):    
     # At this point all audio/video resources must be loaded.
     # Since we know the number of quality presets (say, N), we have to retrieve 2*N URLs in total.
     network_logs = drv.execute_script("return window.performance.getEntriesByType('resource');")
@@ -59,9 +46,9 @@ def get_av_urls(drv):
         initiator_type = network_log.get('initiatorType', '')
         name = network_log.get('name', '')
         if initiator_type == 'fetch' and (bytes_pos := name.find('bytes=0-')) > 0:
-            links.append((name, bytes_pos))
+            links.append((name, bytes_pos + 6))
     
-    return links if len(links) >= 2 * len(qualities) else False
+    return links if len(links) >= 2 * count else False
 
 def download_file(args, session, url):
     response = session.get(url)
@@ -72,7 +59,7 @@ def download_file(args, session, url):
     return response
 
 def write_file(response, filepath):
-    with open(filepath, 'wb+') as f:
+    with open(filepath, 'wb') as f:
         for chunk in response.iter_content(chunk_size=128):
             f.write(chunk)
 
@@ -93,7 +80,8 @@ def main():
     os.makedirs(output_path_dir, exist_ok=True)
 
     options = webdriver.ChromeOptions()
-    options.add_argument('--headless')  # Hide browser GUI
+    options.add_argument('--headless=new')  # Hide browser GUI
+    options.add_argument("--mute-audio")  # Mute the browser
     # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
     # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
     # options.add_argument('--no-sandbox')  # Bypass OS security model
@@ -101,12 +89,25 @@ def main():
     # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
     # options.add_argument('--disable-webrtc')  # Disable WebRTC
 
-    # Request the URL and wait for 20 secs or until we get both audio and video URLs
     driver = webdriver.Chrome(options=options)
     driver.get(args.url)
     try:
+        # Determine which quality presets are available
+        WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"))).click()
+        WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']"))).click()
+        quality_sublist = WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
+        quality_items = quality_sublist.find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
+        qualities = set()
+        for quality_item in quality_items:
+            q = int(quality_item.get_attribute('data-value'))
+            if q > 0:
+                qualities.add(q)
+
+        if args.verbose:
+            print("Qualities:", ', '.join(f"{q}p" for q in sorted(qualities)))
+
         # TODO: move timeout magic to console args
-        urls = WebDriverWait(driver, 120).until(get_av_urls)
+        urls = WebDriverWait(driver, 30).until(lambda d: get_av_urls(d, len(qualities)))
         if args.verbose:
             print("URLs:")
             for url in urls:
@@ -153,46 +154,54 @@ def main():
             write_file(response, filepath)
             
             if content_type.startswith('audio'):
-                pairs[query['type'][0]]['audio'] = { 'url': url, 'bytes_pos': bytes_pos }
+                pairs[query['type'][0]]['audio'] = { 
+                    'url': url, 
+                    'bytes_pos': bytes_pos, 
+                    'path': pathlib.Path(temp_dir) / content_type.replace('/', ".")
+                }
             else:
                 quality = ffmpeg_parse_infos(str(filepath))['video_size'][1]
-                pairs[query['type'][0]]['video'] = { 'url': url, 'bytes_pos': bytes_pos, 'quality': quality }
+                pairs[query['type'][0]]['video'] = { 
+                    'url': url, 
+                    'bytes_pos': bytes_pos, 
+                    'path': pathlib.Path(temp_dir) / content_type.replace('/', "."), 
+                    'quality': quality
+                }
 
                 if not target_pair_type or pairs[target_pair_type]['video']['quality'] < quality:
                     target_pair_type = query['type'][0]
 
         # Download the target audio and video files, 
         # with byte range step of 1 MB, into a temporary directory
-        filepaths = {}
-        bytes_start = 0
-        # TODO: move bytes magic to console args
-        bytes_end = 1024 ** 2
-        for filetype in ('audio', 'video'):
-            info = pairs[target_pair_type][filetype]
+        audio_info = pairs[target_pair_type]['audio']
+        video_info = pairs[target_pair_type]['video']
+        for info in (audio_info, video_info):
             url, bytes_pos = info['url'], info['bytes_pos']
-            url = url[:bytes_pos] + f'bytes={bytes_start}-{bytes_end}'
-            if args.verbose:
-                print("URL:", url, end='\n\n')
+            with open(info['path'], 'ab') as file:
+                # TODO: move bytes magic to console args
+                bytes_start, bytes_size = 0, 1024 ** 2
+                while True:
+                    url = url[:bytes_pos] + f'{bytes_start}-{bytes_start + bytes_size - 1}'
+                    if args.verbose:
+                        print("URL:", url, end='\n\n')
+                    
+                    response = download_file(args, session, url)
+                    if response.status_code < 200 or response.status_code >= 300:
+                        break
 
-            response = download_file(args, session, url)
-
-            content_type = response.headers.get('Content-Type', '')
-            filepath = pathlib.Path(temp_dir) / content_type.replace('/', '.')
-            if args.verbose:
-                print("Filepath:", str(filepath), end='\n\n')
-
-            write_file(response, filepath)
-
-            filepaths[filetype] = filepath
+                    for chunk in response.iter_content(chunk_size=128):
+                        file.write(chunk)
+                    
+                    bytes_start += bytes_size
 
         # Attach the video file name if the output path is a directory
-        if pathlib.Path(args.output_path).suffix == '':
-            args.output_path = os.path.join(args.output_path, filepaths['video'].name)
+        if not pathlib.Path(args.output_path).suffix:
+            args.output_path = os.path.join(args.output_path, video_info['path'].name)
 
         # Merge the downloaded files into one (audio + video)
         with (
-            AudioFileClip(filepaths['audio']) as audio, 
-            VideoFileClip(filepaths['video']) as video
+            AudioFileClip(audio_info['path']) as audio, 
+            VideoFileClip(video_info['path']) as video
         ):
             video.with_audio(audio).write_videofile(args.output_path, codec='libx264')
     
