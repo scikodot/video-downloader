@@ -3,11 +3,15 @@ import os
 import pathlib
 import requests
 import tempfile
+import urllib.parse as urlparser
 import validators
 from moviepy import VideoFileClip, AudioFileClip
+from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium import webdriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as ec
 
 DEFAULT_OUTPUT_SUBPATH = "output"
 
@@ -34,15 +38,43 @@ def validate_output_path(output_path):
     return output_path
 
 def get_av_urls(drv):
-        network_logs = drv.execute_script("return window.performance.getEntriesByType('resource');")
-        links = []
-        for network_log in network_logs:
-            initiator_type = network_log.get('initiatorType', '')
-            name = network_log.get('name', '')
-            if initiator_type == 'fetch' and name != '' and (bytes_pos := name.find('bytes=0-')) > 0:
-                links.append((name, bytes_pos))
-            
-        return links[:2] if len(links) >= 2 else False
+    WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"))).click()
+    WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']"))).click()
+    quality_sublist = WebDriverWait(drv, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
+    quality_items = quality_sublist.find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
+    qualities = set()
+    for quality_item in quality_items:
+        q = int(quality_item.get_attribute('data-value'))
+        if q > 0:
+            qualities.add(q)
+
+    # TODO: add control with --verbose
+    print("Qualities:", ', '.join(f"{q}p" for q in sorted(qualities)))
+    
+    # At this point all audio/video resources must be loaded.
+    # Since we know the number of quality presets (say, N), we have to retrieve 2*N URLs in total.
+    network_logs = drv.execute_script("return window.performance.getEntriesByType('resource');")
+    links = []
+    for network_log in network_logs:
+        initiator_type = network_log.get('initiatorType', '')
+        name = network_log.get('name', '')
+        if initiator_type == 'fetch' and (bytes_pos := name.find('bytes=0-')) > 0:
+            links.append((name, bytes_pos))
+    
+    return links if len(links) >= 2 * len(qualities) else False
+
+def download_file(args, session, url):
+    response = session.get(url)
+    if args.verbose:
+        print("Response:", response)
+        print("Headers:", response.headers, end='\n\n')
+
+    return response
+
+def write_file(response, filepath):
+    with open(filepath, 'wb+') as f:
+        for chunk in response.iter_content(chunk_size=128):
+            f.write(chunk)
 
 def main():
     parser = argparse.ArgumentParser(prog='video-downloader')
@@ -74,9 +106,11 @@ def main():
     driver.get(args.url)
     try:
         # TODO: move timeout magic to console args
-        urls = WebDriverWait(driver, 20).until(get_av_urls)
+        urls = WebDriverWait(driver, 120).until(get_av_urls)
         if args.verbose:
-            print("URLs:", urls, end='\n\n')
+            print("URLs:")
+            for url in urls:
+                print(url)
     except TimeoutException:
         print("Could not obtain the required URLs. Connection timed out.")
         return
@@ -91,43 +125,65 @@ def main():
     for cookie in driver.get_cookies():
         session.cookies.set(cookie['name'], cookie['value'], domain=cookie['domain'])
 
-    # Download files from the obtained URLs, with byte range step of 1 MB, into a temporary directory
-    filepaths = {}
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.verbose:
             print("Temporary directory:", temp_dir)
 
+        # Determine which (pair) of the URLs is to be downloaded
+        pairs = {}
+        target_pair_type = None
+        for url, bytes_pos in urls:
+            # Get the URL query params as a dict
+            parsed = urlparser.urlparse(url)
+            query = urlparser.parse_qs(parsed.query)
+
+            if query['type'][0] not in pairs.keys():
+                pairs[query['type'][0]] = {}
+            
+            response = download_file(args, session, url)
+
+            content_type = response.headers.get('Content-Type', '')
+            if not content_type.startswith(('audio', 'video')):
+                raise ValueError("Inappropriate MIME-type.")
+            
+            filepath = pathlib.Path(temp_dir) / content_type.replace('/', f".type{query['type'][0]}.")
+            if args.verbose:
+                print("Filepath:", str(filepath), end='\n\n')
+
+            write_file(response, filepath)
+            
+            if content_type.startswith('audio'):
+                pairs[query['type'][0]]['audio'] = { 'url': url, 'bytes_pos': bytes_pos }
+            else:
+                quality = ffmpeg_parse_infos(str(filepath))['video_size'][1]
+                pairs[query['type'][0]]['video'] = { 'url': url, 'bytes_pos': bytes_pos, 'quality': quality }
+
+                if not target_pair_type or pairs[target_pair_type]['video']['quality'] < quality:
+                    target_pair_type = query['type'][0]
+
+        # Download the target audio and video files, 
+        # with byte range step of 1 MB, into a temporary directory
+        filepaths = {}
         bytes_start = 0
         # TODO: move bytes magic to console args
         bytes_end = 1024 ** 2
-        for url, bytes_pos in urls:
+        for filetype in ('audio', 'video'):
+            info = pairs[target_pair_type][filetype]
+            url, bytes_pos = info['url'], info['bytes_pos']
             url = url[:bytes_pos] + f'bytes={bytes_start}-{bytes_end}'
             if args.verbose:
                 print("URL:", url, end='\n\n')
 
-            response = session.get(url)
-            if args.verbose:
-                print("Response:", response, end='\n\n')
+            response = download_file(args, session, url)
 
-            headers = response.headers
-            if args.verbose:
-                print("Headers:", headers, end='\n\n')
-
-            content_type = headers.get('Content-Type', '')
+            content_type = response.headers.get('Content-Type', '')
             filepath = pathlib.Path(temp_dir) / content_type.replace('/', '.')
             if args.verbose:
                 print("Filepath:", str(filepath), end='\n\n')
-            
-            if content_type.startswith('audio'):
-                filepaths['audio'] = filepath
-            elif content_type.startswith('video'):
-                filepaths['video'] = filepath
-            else:
-                raise ValueError("Inappropriate MIME-type.")
-            
-            with open(filepath, 'wb+') as f:
-                for chunk in response.iter_content(chunk_size=128):
-                    f.write(chunk)
+
+            write_file(response, filepath)
+
+            filepaths[filetype] = filepath
 
         # Attach the video file name if the output path is a directory
         if pathlib.Path(args.output_path).suffix == '':
