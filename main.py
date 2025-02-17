@@ -14,6 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 
 DEFAULT_OUTPUT_SUBPATH = "output"
+DEFAULT_RATE = 1024
 
 def validate_url(url):
     if not isinstance(url, str):
@@ -65,9 +66,29 @@ def write_file(response, filepath):
 
 def main():
     parser = argparse.ArgumentParser(prog='video-downloader')
-    parser.add_argument('url', help="Video URL", type=validate_url)
-    parser.add_argument('-o', '--output-path', help="Output path", default=get_default_output_path(), type=validate_output_path)
-    parser.add_argument('-v', '--verbose', help="Show debug info", action='store_true')
+    parser.add_argument('url', 
+                        help="Video URL.", 
+                        type=validate_url)
+    
+    parser.add_argument('-o', '--output-path', 
+                        help=f"""
+                            Where to put the downloaded video. 
+                            If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' subpath 
+                            at the directory the program is currently run from.
+                        """, 
+                        default=get_default_output_path(),
+                        type=validate_output_path)
+    
+    parser.add_argument('-r', '--rate', 
+                        help="""
+                            How many kilobytes (KBs) to download on every request. 
+                            Higher rates are advised for longer videos.
+                        """, 
+                        default=DEFAULT_RATE, 
+                        type=int)
+    parser.add_argument('-v', '--verbose', 
+                        help="Show detailed information about performed actions.", 
+                        action='store_true')
     args = parser.parse_args()
 
     if args.verbose:
@@ -76,7 +97,7 @@ def main():
     # Ensure the output path directory exists.
     # Use suffix to determine if the path points to a file or a directory.
     # This correctly assumes that entries like "folder/.ext" have no suffix, i. e. they are directories.
-    output_path_dir = args.output_path if pathlib.Path(args.output_path).suffix == '' else os.path.dirname(args.output_path)
+    output_path_dir = args.output_path if not pathlib.Path(args.output_path).suffix else os.path.dirname(args.output_path)
     os.makedirs(output_path_dir, exist_ok=True)
 
     options = webdriver.ChromeOptions()
@@ -172,16 +193,15 @@ def main():
                     target_pair_type = query['type'][0]
 
         # Download the target audio and video files, 
-        # with byte range step of 1 MB, into a temporary directory
+        # with the rate from CLI args, into a temporary directory
         audio_info = pairs[target_pair_type]['audio']
         video_info = pairs[target_pair_type]['video']
         for info in (audio_info, video_info):
             url, bytes_pos = info['url'], info['bytes_pos']
             with open(info['path'], 'ab') as file:
-                # TODO: move bytes magic to console args
-                bytes_start, bytes_size = 0, 1024 ** 2
+                bytes_start, bytes_num = 0, args.rate * 1024
                 while True:
-                    url = url[:bytes_pos] + f'{bytes_start}-{bytes_start + bytes_size - 1}'
+                    url = url[:bytes_pos] + f'{bytes_start}-{bytes_start + bytes_num - 1}'
                     if args.verbose:
                         print("URL:", url, end='\n\n')
                     
@@ -192,7 +212,7 @@ def main():
                     for chunk in response.iter_content(chunk_size=128):
                         file.write(chunk)
                     
-                    bytes_start += bytes_size
+                    bytes_start += bytes_num
 
         # Attach the video file name if the output path is a directory
         if not pathlib.Path(args.output_path).suffix:
