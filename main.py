@@ -14,12 +14,17 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 
 DEFAULT_OUTPUT_SUBPATH = "output"
-DEFAULT_RATE = 1024
+DEFAULT_RATE, MINIMUM_RATE = 1024, 128
+DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
+
+class ArgumentParserCustom(argparse.ArgumentParser):
+    def add_argument(self, *args, **kwargs):
+        # Add empty line after every help message to visually separate entries
+        if 'help' in kwargs:
+            kwargs['help'] += "\n \n"
+        return super().add_argument(*args, **kwargs)
 
 def validate_url(url):
-    if not isinstance(url, str):
-        raise ValueError(f"URL must be a string, not {type(url)}.")
-
     if not validators.url(url):
         raise ValueError("Invalid URL.")
     
@@ -30,17 +35,28 @@ def get_default_output_path():
     return os.path.join(directory, DEFAULT_OUTPUT_SUBPATH)
 
 def validate_output_path(output_path):
-    if not isinstance(output_path, str):
-        raise ValueError(f"Output path must be a string, not {type(output_path)}.")
-    
     if not pathlib.Path(output_path).is_absolute():
         output_path = os.path.join(get_default_output_path(), output_path)
     
     return output_path
 
+def validate_rate(rate):
+    rate = int(rate)
+    if rate < MINIMUM_RATE:
+        raise ValueError(f"Too small value, must be at least {MINIMUM_RATE} KBs per request.")
+    
+    return rate
+
+def validate_quality(quality):
+    quality = int(quality)
+    if quality < MINIMUM_QUALITY:
+        raise ValueError(f"Too small value, must be at least {MINIMUM_QUALITY}p.")
+    
+    return quality
+
 def get_av_urls(drv, count):    
     # At this point all audio/video resources must be loaded.
-    # Since we know the number of quality presets (say, N), we have to retrieve 2*N URLs in total.
+    # Since we know the number of quality values (say, N), we have to retrieve 2*N URLs in total.
     network_logs = drv.execute_script("return window.performance.getEntriesByType('resource');")
     links = []
     for network_log in network_logs:
@@ -65,30 +81,51 @@ def write_file(response, filepath):
             f.write(chunk)
 
 def main():
-    parser = argparse.ArgumentParser(prog='video-downloader')
+    parser = ArgumentParserCustom(
+        prog='video-downloader', 
+        formatter_class=argparse.RawTextHelpFormatter, 
+        add_help=False)
+    
     parser.add_argument('url', 
                         help="Video URL.", 
                         type=validate_url)
     
+    parser.add_argument('-h', '--help', 
+                        help="Show this help message and exit.", 
+                        action='help', 
+                        default=argparse.SUPPRESS)
+
     parser.add_argument('-o', '--output-path', 
-                        help=f"""
-                            Where to put the downloaded video. 
-                            If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' subpath 
-                            at the directory the program is currently run from.
-                        """, 
+                        help=(
+                            "Where to put the downloaded video. "
+                            "May be absolute or relative.\n"
+                            "If relative, the video will be saved at the specified path under the directory the program was run from.\n"
+                            f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' path under the directory the program was run from."
+                        ), 
                         default=get_default_output_path(),
                         type=validate_output_path)
     
     parser.add_argument('-r', '--rate', 
-                        help="""
-                            How many kilobytes (KBs) to download on every request. 
-                            Higher rates are advised for longer videos.
-                        """, 
+                        help=(
+                            "How many kilobytes (KBs) to download on every request.\n"
+                            "Higher rates are advised for longer videos."
+                        ), 
                         default=DEFAULT_RATE, 
-                        type=int)
+                        type=validate_rate)
+    
+    parser.add_argument('-q', '--quality', 
+                        help=(
+                            "Which quality the downloaded video must have.\n"
+                            "This parameter determines the maximum quality.\n"
+                            "That is, the first quality value lower than or equal to this parameter value will be used."
+                        ), 
+                        default=DEFAULT_QUALITY, 
+                        type=validate_quality)
+    
     parser.add_argument('-v', '--verbose', 
                         help="Show detailed information about performed actions.", 
                         action='store_true')
+    
     args = parser.parse_args()
 
     if args.verbose:
@@ -113,19 +150,23 @@ def main():
     driver = webdriver.Chrome(options=options)
     driver.get(args.url)
     try:
-        # Determine which quality presets are available
+        # Determine which quality values are available
         WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"))).click()
         WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']"))).click()
         quality_sublist = WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
         quality_items = quality_sublist.find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
-        qualities = set()
+        quality_target, qualities = 0, set()
         for quality_item in quality_items:
             q = int(quality_item.get_attribute('data-value'))
             if q > 0:
                 qualities.add(q)
+                if quality_target < q <= args.quality:
+                    quality_target = q
 
         if args.verbose:
             print("Qualities:", ', '.join(f"{q}p" for q in sorted(qualities)))
+            if quality_target < args.quality:
+                print(f"Could not find quality value {args.quality}p. Using the nearest lower quality: {quality_target}p.")
 
         # TODO: move timeout magic to console args
         urls = WebDriverWait(driver, 30).until(lambda d: get_av_urls(d, len(qualities)))
@@ -189,8 +230,11 @@ def main():
                     'quality': quality
                 }
 
-                if not target_pair_type or pairs[target_pair_type]['video']['quality'] < quality:
+                if quality == quality_target:
                     target_pair_type = query['type'][0]
+
+        if not target_pair_type:
+            raise ValueError(f"Could not find content with the quality value of {quality_target}p.")
 
         # Download the target audio and video files, 
         # with the rate from CLI args, into a temporary directory
