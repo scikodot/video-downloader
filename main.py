@@ -16,6 +16,7 @@ from selenium.webdriver.support import expected_conditions as ec
 DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_RATE, MINIMUM_RATE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
+DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
 class ArgumentParserCustom(argparse.ArgumentParser):
     def add_argument(self, *args, **kwargs):
@@ -26,7 +27,7 @@ class ArgumentParserCustom(argparse.ArgumentParser):
 
 def validate_url(url):
     if not validators.url(url):
-        raise ValueError("Invalid URL.")
+        raise argparse.ArgumentTypeError("Invalid URL.")
     
     return url
 
@@ -43,16 +44,23 @@ def validate_output_path(output_path):
 def validate_rate(rate):
     rate = int(rate)
     if rate < MINIMUM_RATE:
-        raise ValueError(f"Too small value, must be at least {MINIMUM_RATE} KBs per request.")
+        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_RATE} KB(-s).")
     
     return rate
 
 def validate_quality(quality):
     quality = int(quality)
     if quality < MINIMUM_QUALITY:
-        raise ValueError(f"Too small value, must be at least {MINIMUM_QUALITY}p.")
+        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_QUALITY}p.")
     
     return quality
+
+def validate_timeout(timeout):
+    timeout = int(timeout)
+    if timeout < MINIMUM_TIMEOUT:
+        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_TIMEOUT} second(-s).")
+
+    return timeout
 
 def get_av_urls(drv, count):    
     # At this point all audio/video resources must be loaded.
@@ -97,8 +105,7 @@ def main():
 
     parser.add_argument('-o', '--output-path', 
                         help=(
-                            "Where to put the downloaded video. "
-                            "May be absolute or relative.\n"
+                            "Where to put the downloaded video. May be absolute or relative.\n"
                             "If relative, the video will be saved at the specified path under the directory the program was run from.\n"
                             f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' path under the directory the program was run from."
                         ), 
@@ -121,6 +128,14 @@ def main():
                         ), 
                         default=DEFAULT_QUALITY, 
                         type=validate_quality)
+
+    parser.add_argument('-t', '--timeout', 
+                        help=(
+                            "How many seconds to wait for every operation on the page to complete.\n"
+                            "Few tens of seconds is usually enough."
+                        ), 
+                        default=DEFAULT_TIMEOUT, 
+                        type=validate_timeout)
     
     parser.add_argument('-v', '--verbose', 
                         help="Show detailed information about performed actions.", 
@@ -151,14 +166,28 @@ def main():
     driver.get(args.url)
     try:
         # Determine which quality values are available
-        WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"))).click()
-        WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']"))).click()
-        quality_sublist = WebDriverWait(driver, 10).until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
-        quality_items = quality_sublist.find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
+        (
+            WebDriverWait(driver, args.timeout)
+            .until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']")))
+            .click()
+        )
+        (
+            WebDriverWait(driver, args.timeout)
+            .until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_list_item_quality']")))
+            .click()
+        )
+        quality_items = (
+            WebDriverWait(driver, args.timeout)
+            .until(ec.element_to_be_clickable((By.CSS_SELECTOR, "div[class~='videoplayer_settings_menu_sublist_item']")))
+            .find_element(By.XPATH, './..').find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
+        )
         quality_target, qualities = 0, set()
         for quality_item in quality_items:
             q = int(quality_item.get_attribute('data-value'))
             if q > 0:
+                if q in qualities:
+                    raise ValueError(f"Duplicate quality value found: {q}p.")
+                
                 qualities.add(q)
                 if quality_target < q <= args.quality:
                     quality_target = q
@@ -168,14 +197,13 @@ def main():
             if quality_target < args.quality:
                 print(f"Could not find quality value {args.quality}p. Using the nearest lower quality: {quality_target}p.")
 
-        # TODO: move timeout magic to console args
-        urls = WebDriverWait(driver, 30).until(lambda d: get_av_urls(d, len(qualities)))
+        urls = WebDriverWait(driver, args.timeout).until(lambda d: get_av_urls(d, len(qualities)))
         if args.verbose:
             print("URLs:")
             for url in urls:
                 print(url)
     except TimeoutException:
-        print("Could not obtain the required URLs. Connection timed out.")
+        print("Could not obtain the required URLs due to a timeout.")
         return
 
     # Open a new session and copy user agent and cookies to it.
