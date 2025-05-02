@@ -28,6 +28,7 @@ def get_default_output_path():
     return os.path.join(directory, DEFAULT_OUTPUT_SUBPATH)
 
 def validate_output_path(output_path):
+    # TODO: add check for inexistent drives
     if not pathlib.Path(output_path).is_absolute():
         output_path = os.path.join(get_default_output_path(), output_path)
     
@@ -53,6 +54,13 @@ def validate_timeout(timeout):
         raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_TIMEOUT} second(-s).")
 
     return timeout
+
+def validate_user_profile(user_profile):
+    if not os.path.isdir(user_profile):
+        raise argparse.ArgumentTypeError(f"Could not find the user profile directory.")
+    
+    return user_profile
+    
 
 def main():
     parser = ArgumentParserCustom(
@@ -102,6 +110,10 @@ def main():
                         ), 
                         default=DEFAULT_TIMEOUT, 
                         type=validate_timeout)
+    
+    parser.add_argument('--user-profile', 
+                        help="Path to the user profile to launch Chrome with.",
+                        type=validate_user_profile)
     
     parser.add_argument('-v', '--verbose', 
                         help="Show detailed information about performed actions.", 

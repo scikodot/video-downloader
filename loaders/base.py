@@ -1,4 +1,5 @@
 import os
+import re
 import pathlib
 import requests
 import tempfile
@@ -9,17 +10,46 @@ from selenium import webdriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
 
+CHROME_DEFAULT_SWITCHES = [
+    "allow-pre-commit-input",
+    "disable-background-networking",
+    "disable-backgrounding-occluded-windows",
+    "disable-client-side-phishing-detection",
+    "disable-default-apps",
+    "disable-hang-monitor",
+    "disable-popup-blocking",
+    "disable-prompt-on-repost",
+    "disable-sync",
+    # "enable-automation",
+    # "enable-logging",
+    # "log-level",
+    # "no-first-run",
+    # "no-service-autorun",
+    # "password-store",
+    # "remote-debugging-port",
+    # "test-type",
+    # "use-mock-keychain",
+    # "flag-switches-begin",
+    # "flag-switches-end"
+]
+
 class LoaderBase(metaclass=ABCMeta):
     def __init__(self, **kwargs):
         options = webdriver.ChromeOptions()
-        options.add_argument('--headless=new')  # Hide browser GUI
-        options.add_argument("--mute-audio")  # Mute the browser
-        # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-        # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-        # options.add_argument('--no-sandbox')  # Bypass OS security model
-        # options.add_argument('--disable-web-security')  # Disable web security
-        # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
-        # options.add_argument('--disable-webrtc')  # Disable WebRTC
+        if 'user_profile' in kwargs:
+            path = pathlib.Path(kwargs['user_profile'])
+            options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
+            options.add_argument(f"--user-data-dir={path.parent}")
+            options.add_argument(f"--profile-directory={path.name}")
+        else:
+            options.add_argument('--headless=new')  # Hide browser GUI
+            options.add_argument("--mute-audio")  # Mute the browser
+            # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+            # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+            # options.add_argument('--no-sandbox')  # Bypass OS security model
+            # options.add_argument('--disable-web-security')  # Disable web security
+            # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
+            # options.add_argument('--disable-webrtc')  # Disable WebRTC
 
         self.driver = webdriver.Chrome(options=options)
         self.output_path = kwargs['output_path']
@@ -49,14 +79,40 @@ class LoaderBase(metaclass=ABCMeta):
         url, bytes_pos = info['url'], info['bytes_pos']
         with open(info['path'], 'ab') as file:
             bytes_start, bytes_num = 0, self.rate * 1024
-            while True:
+            finished = False
+            while not finished:
                 # TODO: consider constructing URL from the previously parsed one
-                url = url[:bytes_pos] + f'{bytes_start}-{bytes_start + bytes_num - 1}'
+                bytes_end = bytes_start + bytes_num - 1
+                url = url[:bytes_pos] + f'{bytes_start}-{bytes_end}'
                 if self.verbose:
                     print("URL:", url, end='\n\n')
                 
                 response = self._download_file(session, url)
                 if response.status_code < 200 or response.status_code >= 300:
+                    print(f"Download request for bytes range [{bytes_start}, {bytes_end}] failed, exiting...")
+                    break
+                
+                # Get the packet size.
+                headers = response.headers
+                content_length = 0
+                if 'Content-Length' in headers:
+                    content_length = int(headers['Content-Length'])
+                elif 'Content-Range' in headers:
+                    content_range = re.split('\s|-|/', headers['Content-Range'])
+                    start, end = int(content_range[1]), int(content_range[2])
+                    content_length = end - start
+                # If no headers are present for content length, 
+                # calculate it from the actual content.
+                else:
+                    content_length = sum(len(chunk) for chunk in response.iter_content(chunk_size=128))
+                
+                # Packet is smaller than required => file is exhausted.
+                if content_length < bytes_num:
+                    finished = True
+                    
+                # Packet is empty => previous packet was the last.
+                # Negative check is required, because Content-Length header value can be negative.
+                if content_length <= 0:
                     break
 
                 for chunk in response.iter_content(chunk_size=128):
@@ -93,7 +149,8 @@ class LoaderBase(metaclass=ABCMeta):
                         'path': pathlib.Path(directory) / content_type.replace('/', ".")
                     }
                 else:
-                    infos = ffmpeg_parse_infos(str(filepath))
+                    # Don't check duration, as it may not be recognized for incomplete files.
+                    infos = ffmpeg_parse_infos(str(filepath), check_duration=False)
                     if self.verbose:
                         print("Infos:", infos, end='\n\n')
                     
@@ -175,5 +232,5 @@ class LoaderBase(metaclass=ABCMeta):
                     AudioFileClip(audio_info['path']) as audio, 
                     VideoFileClip(video_info['path']) as video
                 ):
-                    video.with_audio(audio).write_videofile(self.output_path, codec='libx264')
+                    video.with_audio(audio).write_videofile(self.output_path)
     
