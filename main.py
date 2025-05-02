@@ -132,8 +132,6 @@ def main():
     output_path_dir = args.output_path if not pathlib.Path(args.output_path).suffix else os.path.dirname(args.output_path)
     os.makedirs(output_path_dir, exist_ok=True)
 
-    return
-
     loader = VkVideoLoader(**vars(args))
     loader.get(args.url)
     
