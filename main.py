@@ -28,9 +28,11 @@ def get_default_output_path():
     return os.path.join(directory, DEFAULT_OUTPUT_SUBPATH)
 
 def validate_output_path(output_path):
-    # TODO: add check for inexistent drives
-    if not pathlib.Path(output_path).is_absolute():
+    path = pathlib.Path(output_path)
+    if not path.is_absolute():
         output_path = os.path.join(get_default_output_path(), output_path)
+    elif path.drive and not os.path.exists(path.drive):
+        raise argparse.ArgumentTypeError(f"No such drive: {path.drive}.")
     
     return output_path
 
@@ -57,7 +59,7 @@ def validate_timeout(timeout):
 
 def validate_user_profile(user_profile):
     if not os.path.isdir(user_profile):
-        raise argparse.ArgumentTypeError(f"Could not find the user profile directory.")
+        raise argparse.ArgumentTypeError(f"No such directory: {user_profile}.")
     
     return user_profile
     
@@ -129,6 +131,8 @@ def main():
     # This correctly assumes that entries like "folder/.ext" have no suffix, i. e. they are directories.
     output_path_dir = args.output_path if not pathlib.Path(args.output_path).suffix else os.path.dirname(args.output_path)
     os.makedirs(output_path_dir, exist_ok=True)
+
+    return
 
     loader = VkVideoLoader(**vars(args))
     loader.get(args.url)
