@@ -32,6 +32,7 @@ CHROME_DEFAULT_SWITCHES = [
     # "flag-switches-begin",
     # "flag-switches-end"
 ]
+RESOURCE_TIMING_BUFFER_SIZE = 1000
 
 class LoaderBase(metaclass=ABCMeta):
     def __init__(self, **kwargs):
@@ -57,6 +58,15 @@ class LoaderBase(metaclass=ABCMeta):
         self.quality = kwargs['quality']
         self.timeout = kwargs['timeout']
         self.verbose = kwargs['verbose']
+
+        # Increase resource timing buffer size.
+        # The default of 250 is not always enough.
+        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', 
+                                    {'source': f'performance.setResourceTimingBufferSize({RESOURCE_TIMING_BUFFER_SIZE})'})
+        
+        # Clear browser cache.
+        # Cached URLs are not listed in performance entries.
+        self.driver.execute_cdp_cmd('Network.clearBrowserCache', {})
 
     def _copy_cookies(self, session):
         selenium_user_agent = self.driver.execute_script("return navigator.userAgent;")
@@ -169,6 +179,10 @@ class LoaderBase(metaclass=ABCMeta):
             raise ValueError(f"Could not find content with the quality value of {target_quality}p.")
         
         return pairs[target_urls_type]
+    
+    @abstractmethod
+    def disable_autoplay(self):
+        ...
 
     # Returns a list of available qualities.
     @abstractmethod
@@ -184,6 +198,11 @@ class LoaderBase(metaclass=ABCMeta):
 
     def get(self, url):
         self.driver.get(url)
+        try:
+            self.disable_autoplay()
+        except TimeoutException:
+            print("Could not find an autoplay button to disable.")
+
         try:
             qualities = self.get_qualities()
             target_quality = 0
