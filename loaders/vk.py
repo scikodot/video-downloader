@@ -2,10 +2,29 @@ import urllib.parse as urlparser
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
+from selenium.common import NoSuchElementException
 
 from .base import LoaderBase
 
 class VkVideoLoader(LoaderBase):
+    def check_restrictions(self):
+        # The video is only available for registered users and/or subscribers
+        try:
+            placeholder = self.driver.find_element(By.CSS_SELECTOR, "div[data-testid='placeholder_description']")
+            return placeholder.get_attribute("innerText")
+        except NoSuchElementException:
+            pass
+        
+        # The video is blocked in the current geolocation
+        # TODO: this must be done via response codes, not via HTML
+        try:
+            body = self.driver.find_element(By.CSS_SELECTOR, "body")
+            elements_num = int(body.get_attribute("childElementCount"))
+            if elements_num == 1:
+                return body.get_attribute("innerText")
+        except NoSuchElementException:
+            pass
+    
     def disable_autoplay(self):
         autoplay = (
             WebDriverWait(self.driver, self.timeout)
@@ -75,12 +94,17 @@ class VkVideoLoader(LoaderBase):
         #
         # Here, we first check if the video has ended,
         # and then locate the replay button to click on it.
-        video_ui = self.driver.find_element(By.CSS_SELECTOR, "div[class='videoplayer_ui']")
-        video_state = video_ui.get_attribute('data-state')
-        # TODO: move magics to constants
-        if video_state == 'ended':
-            replay_button = video_ui.find_element(By.CSS_SELECTOR, "div[class~='videoplayer_btn_play']")
-            if replay_button:
-                replay_button.click()
+        try:
+            video_ui = self.driver.find_element(By.CSS_SELECTOR, "div[class='videoplayer_ui']")
+            video_state = video_ui.get_attribute('data-state')
+            # TODO: move magics to constants
+            if video_state == 'ended':
+                try:
+                    replay_button = video_ui.find_element(By.CSS_SELECTOR, "div[class~='videoplayer_btn_play']")
+                    replay_button.click()
+                except NoSuchElementException:
+                    print("Could not locate replay button to click.")
+        except NoSuchElementException:
+            print("Could not locate video UI element.")
         
         return False

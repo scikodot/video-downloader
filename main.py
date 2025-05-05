@@ -85,7 +85,7 @@ def main():
                             "If relative, the video will be saved at the specified path under the directory the program was run from.\n"
                             f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' path under the directory the program was run from."
                         ), 
-                        default=get_default_output_path(),
+                        default=get_default_output_path(), 
                         type=validate_output_path)
     
     parser.add_argument('-r', '--rate', 
@@ -114,7 +114,8 @@ def main():
                         type=validate_timeout)
     
     parser.add_argument('--user-profile', 
-                        help="Path to the user profile to launch Chrome with.",
+                        help="Path to the user profile to launch Chrome with.", 
+                        default=argparse.SUPPRESS, 
                         type=validate_user_profile)
     
     parser.add_argument('-v', '--verbose', 
@@ -132,7 +133,12 @@ def main():
     output_path_dir = args.output_path if not pathlib.Path(args.output_path).suffix else os.path.dirname(args.output_path)
     os.makedirs(output_path_dir, exist_ok=True)
 
+    if args.verbose:
+        print("Setting up loader...")
     loader = VkVideoLoader(**vars(args))
+
+    if args.verbose:
+        print(f"Navigating to {args.url}...")
     loader.get(args.url)
     
     return

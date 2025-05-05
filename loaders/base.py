@@ -39,18 +39,18 @@ class LoaderBase(metaclass=ABCMeta):
         options = webdriver.ChromeOptions()
         if 'user_profile' in kwargs:
             path = pathlib.Path(kwargs['user_profile'])
-            options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
+            # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
             options.add_argument(f"--user-data-dir={path.parent}")
             options.add_argument(f"--profile-directory={path.name}")
-        else:
-            options.add_argument('--headless=new')  # Hide browser GUI
-            options.add_argument("--mute-audio")  # Mute the browser
-            # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-            # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-            # options.add_argument('--no-sandbox')  # Bypass OS security model
-            # options.add_argument('--disable-web-security')  # Disable web security
-            # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
-            # options.add_argument('--disable-webrtc')  # Disable WebRTC
+        
+        # options.add_argument('--headless=new')  # Hide browser GUI
+        options.add_argument("--mute-audio")  # Mute the browser
+        # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+        # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+        # options.add_argument('--no-sandbox')  # Bypass OS security model
+        # options.add_argument('--disable-web-security')  # Disable web security
+        # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
+        # options.add_argument('--disable-webrtc')  # Disable WebRTC
 
         self.driver = webdriver.Chrome(options=options)
         self.output_path = kwargs['output_path']
@@ -181,6 +181,10 @@ class LoaderBase(metaclass=ABCMeta):
         return pairs[target_urls_type]
     
     @abstractmethod
+    def check_restrictions(self):
+        ...
+    
+    @abstractmethod
     def disable_autoplay(self):
         ...
 
@@ -198,10 +202,17 @@ class LoaderBase(metaclass=ABCMeta):
 
     def get(self, url):
         self.driver.get(url)
+
+        # First, check if the video is accessible
+        access_restricted_msg = self.check_restrictions()
+        if access_restricted_msg:
+            print(f"Could not access the video due to the following reason: {access_restricted_msg}")
+            return
+
         try:
             self.disable_autoplay()
         except TimeoutException:
-            print("Could not find an autoplay button to disable.")
+            print("Could not find an autoplay button to click.")
 
         try:
             qualities = self.get_qualities()
