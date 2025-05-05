@@ -2,6 +2,7 @@ import argparse
 import os
 import pathlib
 import validators
+import urllib.parse as urlparser
 
 from loaders.vk import VkVideoLoader
 
@@ -63,6 +64,12 @@ def validate_user_profile(user_profile):
     
     return user_profile
     
+def get_loader_class(url):
+    parsed_url = urlparser.urlparse(url)
+    if parsed_url.netloc.endswith("vkvideo.ru"):
+        return VkVideoLoader
+    
+    print(f"Could not find loader for '{parsed_url.netloc}'. Perhaps, it is not supported yet.")
 
 def main():
     parser = ArgumentParserCustom(
@@ -139,8 +146,11 @@ def main():
 
     if args.verbose:
         print("Setting up loader...")
-    loader = VkVideoLoader(**vars(args))
-
+    loader_class = get_loader_class(args.url)
+    if not loader_class:
+        return
+    
+    loader = loader_class(**vars(args))
     try:
         if args.verbose:
             print(f"Navigating to {args.url}...")
@@ -154,6 +164,7 @@ def main():
         except Exception as ex:
             print("Could not terminate driver gracefully.")
             print(ex)
+    
     return
 
 if __name__ == '__main__':
