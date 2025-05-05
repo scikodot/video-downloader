@@ -43,7 +43,9 @@ class LoaderBase(metaclass=ABCMeta):
             options.add_argument(f"--user-data-dir={path.parent}")
             options.add_argument(f"--profile-directory={path.name}")
         
-        # options.add_argument('--headless=new')  # Hide browser GUI
+        if kwargs['headless']:
+            options.add_argument('--headless=new')  # Hide browser GUI
+        
         options.add_argument("--mute-audio")  # Mute the browser
         # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
         # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
@@ -99,7 +101,7 @@ class LoaderBase(metaclass=ABCMeta):
                 
                 response = self._download_file(session, url)
                 if response.status_code < 200 or response.status_code >= 300:
-                    print(f"Download request for bytes range [{bytes_start}, {bytes_end}] failed, exiting...")
+                    print(f"Download request for bytes range [{bytes_start}, {bytes_end}] failed (response code {response.status_code}), exiting...")
                     break
                 
                 # Get the packet size.
@@ -206,7 +208,7 @@ class LoaderBase(metaclass=ABCMeta):
         # First, check if the video is accessible
         access_restricted_msg = self.check_restrictions()
         if access_restricted_msg:
-            print(f"Could not access the video due to the following reason: {access_restricted_msg}")
+            print(f"Could not access the video. Reason: {access_restricted_msg}")
             return
 
         try:

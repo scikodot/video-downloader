@@ -113,13 +113,17 @@ def main():
                         default=DEFAULT_TIMEOUT, 
                         type=validate_timeout)
     
+    parser.add_argument('-v', '--verbose', 
+                        help="Show detailed information about performed actions.", 
+                        action='store_true')
+    
     parser.add_argument('--user-profile', 
                         help="Path to the user profile to launch Chrome with.", 
                         default=argparse.SUPPRESS, 
                         type=validate_user_profile)
     
-    parser.add_argument('-v', '--verbose', 
-                        help="Show detailed information about performed actions.", 
+    parser.add_argument('--headless', 
+                        help="Run browser in headless mode, i. e. without GUI.", 
                         action='store_true')
     
     args = parser.parse_args()
@@ -137,10 +141,19 @@ def main():
         print("Setting up loader...")
     loader = VkVideoLoader(**vars(args))
 
-    if args.verbose:
-        print(f"Navigating to {args.url}...")
-    loader.get(args.url)
-    
+    try:
+        if args.verbose:
+            print(f"Navigating to {args.url}...")
+        loader.get(args.url)
+    finally:
+        if args.verbose:
+            print("Closing driver...")
+        try:
+            loader.driver.close()
+            loader.driver.quit()
+        except Exception as ex:
+            print("Could not terminate driver gracefully.")
+            print(ex)
     return
 
 if __name__ == '__main__':
