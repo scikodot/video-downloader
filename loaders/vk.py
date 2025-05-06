@@ -33,6 +33,13 @@ class VkVideoLoader(LoaderBase):
         if autoplay.get_attribute("data-value-checked") == 'true':
             autoplay.click()
 
+    def get_title(self):
+        title = (
+            WebDriverWait(self.driver, self.timeout)
+            .until(ec.visibility_of_element_located((By.CSS_SELECTOR, "div[data-testid='video_modal_title']")))
+        )
+        return title.get_attribute("innerText")
+
     def get_qualities(self):
         # Click the 'Settings' button
         if self.verbose:

@@ -28,12 +28,12 @@ def validate_url(url):
 
 def get_default_output_path():
     directory = pathlib.Path(__file__).parent.resolve()
-    return os.path.join(directory, DEFAULT_OUTPUT_SUBPATH)
+    return directory / DEFAULT_OUTPUT_SUBPATH
 
 def validate_output_path(output_path):
     path = pathlib.Path(output_path)
     if not path.is_absolute():
-        output_path = os.path.join(get_default_output_path(), output_path)
+        output_path = get_default_output_path() / output_path
     elif path.drive and not os.path.exists(path.drive):
         raise argparse.ArgumentTypeError(f"No such drive: {path.drive}.")
     
@@ -150,7 +150,8 @@ def main():
     # Ensure the output path directory exists.
     # Use suffix to determine if the path points to a file or a directory.
     # This correctly assumes that entries like "folder/.ext" have no suffix, i. e. they are directories.
-    output_path_dir = args.output_path if not pathlib.Path(args.output_path).suffix else os.path.dirname(args.output_path)
+    output_path = pathlib.Path(args.output_path)
+    output_path_dir = output_path.parent if output_path.suffix else output_path
     os.makedirs(output_path_dir, exist_ok=True)
 
     if args.verbose:

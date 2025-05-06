@@ -1,16 +1,18 @@
-import os
 import re
 import pathlib
+import moviepy.tools
 import requests
 import tempfile
+import moviepy
 from abc import ABCMeta, abstractmethod
+from datetime import datetime
 from moviepy import VideoFileClip, AudioFileClip
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium import webdriver
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.common import TimeoutException
 
-CHROME_DEFAULT_SWITCHES = [
+DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
     "disable-background-networking",
     "disable-backgrounding-occluded-windows",
@@ -34,6 +36,9 @@ CHROME_DEFAULT_SWITCHES = [
 ]
 RESOURCE_TIMING_BUFFER_SIZE = 1000
 
+DEFAULT_TITLE_PREFIX = "video_"
+DEFAULT_EXTENSION = "mp4"
+
 class LoaderBase(metaclass=ABCMeta):
     def __init__(self, **kwargs):
         options = webdriver.ChromeOptions()
@@ -55,7 +60,7 @@ class LoaderBase(metaclass=ABCMeta):
         # options.add_argument('--disable-webrtc')  # Disable WebRTC
 
         self.driver = webdriver.Chrome(options=options)
-        self.output_path = kwargs['output_path']
+        self.output_path = pathlib.Path(kwargs['output_path'])
         self.rate = kwargs['rate']
         self.quality = kwargs['quality']
         self.timeout = kwargs['timeout']
@@ -167,7 +172,9 @@ class LoaderBase(metaclass=ABCMeta):
                     if self.verbose:
                         print("Infos:", infos, end='\n\n')
                     
-                    quality = infos['video_size'][1]
+                    # Here, we take the minimum of width and height to also handle non-standard aspect ratios. 
+                    # In other words, 144p, 240p, etc. can also stand for width rather than height only.
+                    quality = min(infos['video_size'])
                     pairs[urls_type]['video'] = { 
                         'url': url, 
                         'bytes_pos': bytes_pos, 
@@ -191,6 +198,10 @@ class LoaderBase(metaclass=ABCMeta):
     def disable_autoplay(self):
         ...
 
+    @abstractmethod
+    def get_title(self):
+        ...
+
     # Returns a list of available qualities.
     @abstractmethod
     def get_qualities(self):
@@ -211,11 +222,30 @@ class LoaderBase(metaclass=ABCMeta):
         if access_restricted_msg:
             print(f"Could not access the video. Reason: {access_restricted_msg}")
             return
-
+        
         try:
             self.disable_autoplay()
         except TimeoutException:
             print("Could not find an autoplay button to click.")
+
+        # No filename was provided
+        if not self.output_path.suffix:
+            # Get the video title
+            try:
+                title = self.get_title().strip()
+                self.output_path /= title
+            
+            # Use a timestamp-based one if none found
+            except TimeoutException:
+                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+                title = DEFAULT_TITLE_PREFIX + timestamp
+                print(f"Could not find video title. Using \"{title}\" instead.")
+
+        # Ensure the extension is present and correct
+        if (not self.output_path.suffix 
+            or not (info := moviepy.tools.extensions_dict.get(self.output_path.suffix[1:])) 
+            or info["type"] != "video"):
+            self.output_path = f"{self.output_path}.{DEFAULT_EXTENSION}"
 
         try:
             qualities = self.get_qualities()
@@ -244,7 +274,7 @@ class LoaderBase(metaclass=ABCMeta):
         except TimeoutException:
             print("Could not obtain the required URLs due to a timeout.")
             return
-        
+
         # Open a new session and copy user agent and cookies to it.
         # This is required so that this session is allowed to access the previously obtained URLs.
         with requests.Session() as session:
@@ -259,11 +289,6 @@ class LoaderBase(metaclass=ABCMeta):
                 video_info = target['video']
                 self._download_file_by_info(session, audio_info)
                 self._download_file_by_info(session, video_info)
-
-                # Append the video file name if the output path is a directory
-                # TODO: get rid of os.path.join, use pathlib.Path instead
-                if not pathlib.Path(self.output_path).suffix:
-                    self.output_path = os.path.join(self.output_path, video_info['path'].name)
 
                 # Merge the downloaded files into one (audio + video)
                 with (
