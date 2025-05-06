@@ -60,6 +60,7 @@ class LoaderBase(metaclass=ABCMeta):
         self.quality = kwargs['quality']
         self.timeout = kwargs['timeout']
         self.verbose = kwargs['verbose']
+        self.exact = kwargs['exact']
 
         # Increase resource timing buffer size.
         # The default of 250 is not always enough.
@@ -226,7 +227,12 @@ class LoaderBase(metaclass=ABCMeta):
             if self.verbose:
                 print("Qualities:", ', '.join(f"{q}p" for q in sorted(qualities)))
                 if target_quality < self.quality:
-                    print(f"Could not find quality value {self.quality}p. Using the nearest lower quality: {target_quality}p.")
+                    print(f"Could not find quality value {self.quality}p.", end=' ')
+                    if self.exact:
+                        print("Exiting, because the '--exact' option was used.")
+                        return
+                    
+                    print(f"Using the nearest lower quality: {target_quality}p.")
 
             urls = WebDriverWait(self.driver, self.timeout).until(lambda _: self.get_urls(len(qualities)))
             if self.verbose:

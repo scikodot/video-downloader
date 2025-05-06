@@ -6,6 +6,8 @@ import urllib.parse as urlparser
 
 from loaders.vk import VkVideoLoader
 
+PROGRAM_NAME = 'video-downloader'
+
 DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_RATE, MINIMUM_RATE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
@@ -73,7 +75,7 @@ def get_loader_class(url):
 
 def main():
     parser = ArgumentParserCustom(
-        prog='video-downloader', 
+        prog=PROGRAM_NAME, 
         formatter_class=argparse.RawTextHelpFormatter, 
         add_help=False)
     
@@ -90,7 +92,7 @@ def main():
                         help=(
                             "Where to put the downloaded video. May be absolute or relative.\n"
                             "If relative, the video will be saved at the specified path under the directory the program was run from.\n"
-                            f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}' path under the directory the program was run from."
+                            f"If omitted, the video will be saved to the \"{DEFAULT_OUTPUT_SUBPATH}/\" path under the directory the program was run from."
                         ), 
                         default=get_default_output_path(), 
                         type=validate_output_path)
@@ -105,9 +107,9 @@ def main():
     
     parser.add_argument('-q', '--quality', 
                         help=(
-                            "Which quality the downloaded video must have.\n"
-                            "This parameter determines the maximum quality.\n"
-                            "That is, the first quality value lower than or equal to this parameter value will be used."
+                            f"Which quality the downloaded video must have (e. g. {DEFAULT_QUALITY}).\n"
+                            "This parameter determines the exact quality if used together with '--strict' flag, and a maximum quality otherwise.\n"
+                            "In the latter case, the first quality value lower than or equal to this parameter value will be used."
                         ), 
                         default=DEFAULT_QUALITY, 
                         type=validate_quality)
@@ -120,17 +122,24 @@ def main():
                         default=DEFAULT_TIMEOUT, 
                         type=validate_timeout)
     
-    parser.add_argument('-v', '--verbose', 
-                        help="Show detailed information about performed actions.", 
-                        action='store_true')
-    
-    parser.add_argument('--user-profile', 
-                        help="Path to the user profile to launch Chrome with.", 
+    parser.add_argument('-u', '--user-profile', 
+                        help=(
+                            "Path to the user profile to launch Chrome with.\n"
+                            "This must be a combination of both '--user-data-dir' and '--profile-directory' arguments supplied to Chrome."
+                        ), 
                         default=argparse.SUPPRESS, 
                         type=validate_user_profile)
     
-    parser.add_argument('--headless', 
+    parser.add_argument('-e', '--exact', 
+                        help="Do not load the video in any quality if the specified quality is not found.", 
+                        action='store_true')
+    
+    parser.add_argument('-l', '--headless', 
                         help="Run browser in headless mode, i. e. without GUI.", 
+                        action='store_true')
+    
+    parser.add_argument('-v', '--verbose', 
+                        help="Show detailed information about performed actions.", 
                         action='store_true')
     
     args = parser.parse_args()
@@ -162,7 +171,7 @@ def main():
             loader.driver.close()
             loader.driver.quit()
         except Exception as ex:
-            print("Could not terminate driver gracefully.")
+            print("Could not terminate the driver gracefully.")
             print(ex)
     
     return

@@ -97,7 +97,6 @@ class VkVideoLoader(LoaderBase):
         try:
             video_ui = self.driver.find_element(By.CSS_SELECTOR, "div[class='videoplayer_ui']")
             video_state = video_ui.get_attribute('data-state')
-            # TODO: move magics to constants
             if video_state == 'ended':
                 try:
                     replay_button = video_ui.find_element(By.CSS_SELECTOR, "div[class~='videoplayer_btn_play']")
