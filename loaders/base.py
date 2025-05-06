@@ -37,7 +37,7 @@ DEFAULT_CHROME_SWITCHES = [
 RESOURCE_TIMING_BUFFER_SIZE = 1000
 
 DEFAULT_TITLE_PREFIX = "video_"
-DEFAULT_EXTENSION = "mp4"
+DEFAULT_EXTENSION = ".mp4"
 
 class LoaderBase(metaclass=ABCMeta):
     def __init__(self, **kwargs):
@@ -64,8 +64,9 @@ class LoaderBase(metaclass=ABCMeta):
         self.rate = kwargs['rate']
         self.quality = kwargs['quality']
         self.timeout = kwargs['timeout']
-        self.verbose = kwargs['verbose']
         self.exact = kwargs['exact']
+        self.overwrite = kwargs['overwrite']
+        self.verbose = kwargs['verbose']
 
         # Increase resource timing buffer size.
         # The default of 250 is not always enough.
@@ -222,11 +223,6 @@ class LoaderBase(metaclass=ABCMeta):
         if access_restricted_msg:
             print(f"Could not access the video. Reason: {access_restricted_msg}")
             return
-        
-        try:
-            self.disable_autoplay()
-        except TimeoutException:
-            print("Could not find an autoplay button to click.")
 
         # No filename was provided
         if not self.output_path.suffix:
@@ -245,7 +241,20 @@ class LoaderBase(metaclass=ABCMeta):
         if (not self.output_path.suffix 
             or not (info := moviepy.tools.extensions_dict.get(self.output_path.suffix[1:])) 
             or info["type"] != "video"):
-            self.output_path = f"{self.output_path}.{DEFAULT_EXTENSION}"
+            self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)
+
+        # Ensure the file does not exist or if it can be overwritten
+        if self.output_path.exists() and not self.overwrite:
+           print(
+                f"Cannot save the video to the already existing file \"{self.output_path}\". "
+                "Use '--overwrite' argument to be able to overwrite the existing file."
+            )
+           return
+
+        try:
+            self.disable_autoplay()
+        except TimeoutException:
+            print("Could not find an autoplay button to click.")
 
         try:
             qualities = self.get_qualities()

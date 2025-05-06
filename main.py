@@ -134,6 +134,10 @@ def main():
                         help="Do not load the video in any quality if the specified quality is not found.", 
                         action='store_true')
     
+    parser.add_argument('-w', '--overwrite', 
+                        help="Overwrite the video file with the same name if it exists.", 
+                        action='store_true')
+    
     parser.add_argument('-l', '--headless', 
                         help="Run browser in headless mode, i. e. without GUI.", 
                         action='store_true')
