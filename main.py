@@ -1,4 +1,5 @@
 import argparse
+import logging
 import pathlib
 import urllib.parse as urlparser
 from typing import Any
@@ -70,15 +71,12 @@ def validate_user_profile(user_profile: str) -> str:
 
     return user_profile
 
-def get_loader_class(url: str) -> LoaderBase | None:
+def get_loader_class(url: str) -> tuple[str, LoaderBase | None]:
     parsed_url = urlparser.urlparse(url)
     if parsed_url.netloc.endswith("vkvideo.ru"):
-        return VkVideoLoader
+        return (parsed_url.netloc, VkVideoLoader)
 
-    print(
-        f"Could not find loader for '{parsed_url.netloc}'. "
-        "Perhaps, it is not supported yet.")
-    return None
+    return (parsed_url.netloc, None)
 
 def main() -> None:
     parser = ArgumentParserCustom(
@@ -153,7 +151,7 @@ def main() -> None:
         "-e", "--exact",
         help=(
             "Do not load the video in any quality "
-            "if the specified quality is not found.",
+            "if the specified quality is not found."
         ),
         action="store_true")
 
@@ -174,8 +172,17 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.verbose:
-        print("Args:", vars(args), end="\n\n")
+    # Set common (root) logger format and verbosity level
+    # TODO: consider adding 3 verbosity levels:
+    # -v: messages of level INFO or higher
+    # -vv: messages of level DEBUG or higher (this package only)
+    # -vvv: messages of level DEBUG or higher (all used packages, like selenium, etc.)
+    logging.basicConfig(
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        level="DEBUG" if args.verbose else "WARNING")
+    logger = logging.getLogger("root")
+
+    logger.debug("Args: %s", vars(args))
 
     # Ensure the output path directory exists.
     # Use suffix to determine if the path points to a file or a directory.
@@ -185,28 +192,26 @@ def main() -> None:
     output_path_dir = output_path.parent if output_path.suffix else output_path
     pathlib.Path.mkdir(output_path_dir, parents=True, exist_ok=True)
 
-    if args.verbose:
-        print("Setting up loader...")
-    loader_class = get_loader_class(args.url)
+    logger.info("Setting up loader...")
+    netloc, loader_class = get_loader_class(args.url)
     if not loader_class:
+        logger.info(
+            "Could not find loader for '%s'. Perhaps, it is not supported yet.", netloc)
         return
 
     loader = loader_class(**vars(args))
     try:
-        if args.verbose:
-            print(f"Navigating to {args.url}...")
+        logger.info("Navigating to %s...", args.url)
         loader.get(args.url)
     finally:
-        if args.verbose:
-            print("Closing driver...")
+        logger.info("Closing driver...")
         try:
             loader.driver.close()
             loader.driver.quit()
         except WebDriverException as ex:
-            print("Could not terminate the driver gracefully.")
-            print(ex)
+            logger.debug("Could not terminate the driver gracefully.\n%s", ex)
 
     return
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

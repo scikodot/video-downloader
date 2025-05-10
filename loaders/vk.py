@@ -9,6 +9,9 @@ from .base import LoaderBase
 
 
 class VkVideoLoader(LoaderBase):
+    def get_logger_name(self):
+        return __name__
+
     def check_restrictions(self) -> str | None:
         # The video is only available for registered users and/or subscribers
         try:
@@ -50,8 +53,7 @@ class VkVideoLoader(LoaderBase):
 
     def get_qualities(self) -> set[int]:
         # Click the 'Settings' button
-        if self.verbose:
-            print("Waiting for Settings button to appear...")
+        self.logger.info("Waiting for Settings button to appear...")
         (
             WebDriverWait(self.driver, self.timeout)
             .until(ec.element_to_be_clickable((
@@ -61,8 +63,7 @@ class VkVideoLoader(LoaderBase):
         )
 
         # Click the 'Quality' menu option
-        if self.verbose:
-            print("Waiting for Quality menu option to appear...")
+        self.logger.info("Waiting for Quality menu option to appear...")
         (
             WebDriverWait(self.driver, self.timeout)
             .until(ec.element_to_be_clickable((
@@ -72,8 +73,7 @@ class VkVideoLoader(LoaderBase):
         )
 
         # Get the list of available qualities
-        if self.verbose:
-            print("Waiting for quality options to appear...")
+        self.logger.info("Waiting for quality options to appear...")
         quality_items = (
             WebDriverWait(self.driver, self.timeout)
             .until(ec.element_to_be_clickable((
@@ -106,11 +106,11 @@ class VkVideoLoader(LoaderBase):
                     urls[query_type].append((name, bytes_pos + 6))
                     count += 1
 
-        if self.verbose:
-            urls_num = {k: len(v) for k, v in urls.items()}
-            print(
-                f"Number of URLs obtained by type: {urls_num}. "
-                f"Total number of performance entries: {len(network_logs)}.")
+        urls_num = {k: len(v) for k, v in urls.items()}
+        self.logger.debug(
+            "Number of URLs obtained by type: %s. "
+            "Total number of performance entries: %s.",
+            urls_num, len(network_logs))
 
         if count >= 2 * qualities_num:
             return urls
@@ -133,8 +133,8 @@ class VkVideoLoader(LoaderBase):
                         "div[class~='videoplayer_btn_play']")
                     replay_button.click()
                 except NoSuchElementException:
-                    print("Could not locate replay button to click.")
+                    self.logger.exception("Could not locate replay button to click.")
         except NoSuchElementException:
-            print("Could not locate video UI element.")
+            self.logger.exception("Could not locate video UI element.")
 
         return False

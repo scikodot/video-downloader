@@ -1,3 +1,4 @@
+import logging
 import pathlib
 import re
 import tempfile
@@ -69,7 +70,7 @@ class LoaderBase(metaclass=ABCMeta):
         self.timeout = kwargs["timeout"]
         self.exact = kwargs["exact"]
         self.overwrite = kwargs["overwrite"]
-        self.verbose = kwargs["verbose"]
+        self.logger = logging.getLogger(self.get_logger_name())
 
         # Increase resource timing buffer size.
         # The default of 250 is not always enough.
@@ -83,8 +84,7 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _copy_cookies(self, session: requests.Session) -> None:
         selenium_user_agent = self.driver.execute_script("return navigator.userAgent;")
-        if self.verbose:
-            print("User agent:", selenium_user_agent, end="\n\n")
+        self.logger.debug("User agent: %s", selenium_user_agent)
 
         session.headers.update({"user-agent": selenium_user_agent})
         for cookie in self.driver.get_cookies():
@@ -95,9 +95,8 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _download_file(self, session: requests.Session, url: str) -> requests.Response:
         response = session.get(url)
-        if self.verbose:
-            print("Response:", response)
-            print("Headers:", response.headers, end="\n\n")
+        self.logger.debug("Response: %s", response)
+        self.logger.debug("Headers: %s", response.headers)
 
         return response
 
@@ -111,14 +110,14 @@ class LoaderBase(metaclass=ABCMeta):
                 # TODO: consider constructing URL from the previously parsed one
                 bytes_end = bytes_start + bytes_num - 1
                 url = url[:bytes_pos] + f"{bytes_start}-{bytes_end}"
-                if self.verbose:
-                    print("URL:", url, end="\n\n")
+                self.logger.debug("URL: %s", url)
 
                 response = self._download_file(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
-                    print(
-                        f"Download request for bytes ({bytes_start}, {bytes_end}) "
-                        f"failed with code {response.status_code}), exiting...")
+                    self.logger.error(
+                        "Download request for bytes (%s, %s) "
+                        "failed with code %s, exiting...",
+                        bytes_start, bytes_end, response.status_code)
                     break
 
                 # Get the packet size.
@@ -130,7 +129,7 @@ class LoaderBase(metaclass=ABCMeta):
                     content_range = re.split(r"\s|-|/", headers["Content-Range"])
                     start, end = int(content_range[1]), int(content_range[2])
                     content_length = end - start
-                # If no headers are present for content length, 
+                # If no headers are present for content length,
                 # calculate it from the actual content.
                 else:
                     content_length = sum(
@@ -175,8 +174,7 @@ class LoaderBase(metaclass=ABCMeta):
 
                 filename = content_type.replace("/", f".type{urls_type}.")
                 filepath = pathlib.Path(directory) / filename
-                if self.verbose:
-                    print("Filepath:", str(filepath), end="\n\n")
+                self.logger.debug("Filepath: %s", str(filepath))
 
                 self._write_file(response, filepath)
 
@@ -191,8 +189,7 @@ class LoaderBase(metaclass=ABCMeta):
                     # Don't check duration, as it may not be recognized
                     # for incomplete files.
                     infos = ffmpeg_parse_infos(str(filepath), check_duration=False)
-                    if self.verbose:
-                        print("Infos:", infos, end="\n\n")
+                    self.logger.debug("Infos: %s", infos)
 
                     # Here, we take the minimum of width and height to also handle
                     # non-standard aspect ratios.
@@ -213,6 +210,10 @@ class LoaderBase(metaclass=ABCMeta):
             raise ValueError(f"Could not find content with the quality value of {target_quality}p.")
 
         return pairs[target_urls_type]
+
+    @abstractmethod
+    def get_logger_name(self) -> str:
+        ...
 
     @abstractmethod
     def check_restrictions(self) -> str | None:
@@ -246,7 +247,8 @@ class LoaderBase(metaclass=ABCMeta):
         # First, check if the video is accessible
         access_restricted_msg = self.check_restrictions()
         if access_restricted_msg:
-            print(f"Could not access the video. Reason: {access_restricted_msg}")
+            self.logger.error(
+                "Could not access the video. Reason: %s", access_restricted_msg)
             return
 
         # No filename was provided
@@ -260,7 +262,8 @@ class LoaderBase(metaclass=ABCMeta):
             except TimeoutException:
                 timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
                 title = DEFAULT_TITLE_PREFIX + timestamp
-                print(f"Could not find video title. Using '{title}' instead.")
+                self.logger.exception(
+                    "Could not find video title. Using '%s' instead.", title)
 
         # Ensure the extension is present and correct
         suffix = self.output_path.suffix
@@ -271,16 +274,16 @@ class LoaderBase(metaclass=ABCMeta):
 
         # Ensure the file does not exist or if it can be overwritten
         if self.output_path.exists() and not self.overwrite:
-            print(
-                "Cannot save the video "
-                f"to the already existing file '{self.output_path}'. "
-                "Use '--overwrite' argument to be able to overwrite the existing file.")
+            self.logger.error(
+                "Cannot save the video to the already existing file '%s'. "
+                "Use '--overwrite' argument to be able to overwrite the existing file.",
+                self.output_path)
             return
 
         try:
             self.disable_autoplay()
         except TimeoutException:
-            print("Could not find an autoplay button to click.")
+            self.logger.exception("Could not find an autoplay button to click.")
 
         try:
             qualities = self.get_qualities()
@@ -289,28 +292,27 @@ class LoaderBase(metaclass=ABCMeta):
                 if target_quality < q <= self.quality:
                     target_quality = q
 
-            if self.verbose:
-                print("Qualities:", ", ".join(f"{q}p" for q in sorted(qualities)))
-                if target_quality < self.quality:
-                    print(f"Could not find quality value {self.quality}p.", end=" ")
-                    if self.exact:
-                        print("Exiting, because the '--exact' option was used.")
-                        return
+            self.logger.debug(
+                "Qualities: %s", ", ".join(f"{q}p" for q in sorted(qualities)))
+            if target_quality < self.quality:
+                self.logger.info("Could not find quality value %sp.", self.quality)
+                if self.exact:
+                    self.logger.info("Exiting, because the '--exact' option was used.")
+                    return
 
-                    print(f"Using the nearest lower quality: {target_quality}p.")
+                self.logger.info(
+                    "Using the nearest lower quality: %sp.", target_quality)
 
             urls = (
                 WebDriverWait(self.driver, self.timeout)
                 .until(lambda _: self.get_urls(len(qualities)))
             )
-            if self.verbose:
-                print("URLs:")
-                for urls_type, urls_list in urls.items():
-                    print(f"{urls_type}:", urls_list)
-                print()
+            for urls_type, urls_list in urls.items():
+                self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
 
         except TimeoutException:
-            print("Could not obtain the required URLs due to a timeout.")
+            self.logger.exception(
+                "Could not obtain the required URLs due to a timeout.")
             return
 
         # Open a new session and copy user agent and cookies to it.
@@ -319,8 +321,7 @@ class LoaderBase(metaclass=ABCMeta):
         with requests.Session() as session:
             self._copy_cookies(session)
             with tempfile.TemporaryDirectory() as directory:
-                if self.verbose:
-                    print("Temporary directory:", directory, end="\n\n")
+                self.logger.debug("Temporary directory: %s", directory)
 
                 target = self._filter_urls(session, directory, urls, target_quality)
 
