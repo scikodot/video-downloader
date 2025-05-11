@@ -9,6 +9,7 @@ from typing import Any
 import validators
 from selenium.common.exceptions import WebDriverException
 
+from exceptions import PathNotFoundError, TooSmallValueError, UrlValidationError
 from loaders.base import LoaderBase
 from loaders.vk import VkVideoLoader
 
@@ -32,7 +33,7 @@ class ArgumentParserCustom(argparse.ArgumentParser):
 def validate_url(url: str) -> str:
     """Assert that the provided URL is valid."""
     if not validators.url(url):
-        raise argparse.ArgumentTypeError("Invalid URL.")
+        raise UrlValidationError(url)
 
     return url
 
@@ -48,7 +49,7 @@ def validate_output_path(output_path: str) -> str:
     if not path.is_absolute():
         output_path = get_default_output_path() / output_path
     elif path.drive and not pathlib.Path(path.drive).exists():
-        raise argparse.ArgumentTypeError(f"No such drive: {path.drive}.")
+        raise PathNotFoundError(path.drive)
 
     return output_path
 
@@ -56,7 +57,7 @@ def validate_rate(rate: int) -> int:
     """Assert that the provided download rate is valid."""
     rate = int(rate)
     if rate < MINIMUM_RATE:
-        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_RATE} KB(-s).")
+        raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
 
     return rate
 
@@ -64,7 +65,7 @@ def validate_quality(quality: int) -> int:
     """Assert that the required quality is valid."""
     quality = int(quality)
     if quality < MINIMUM_QUALITY:
-        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_QUALITY}p.")
+        raise TooSmallValueError(quality, MINIMUM_QUALITY, "p", indent="")
 
     return quality
 
@@ -72,14 +73,14 @@ def validate_timeout(timeout: int) -> int:
     """Assert that the provided timeout is valid."""
     timeout = int(timeout)
     if timeout < MINIMUM_TIMEOUT:
-        raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_TIMEOUT} second(-s).")
+        raise TooSmallValueError(timeout, MINIMUM_TIMEOUT, "second(-s)")
 
     return timeout
 
 def validate_user_profile(user_profile: str) -> str:
     """Assert that the provided user profile is available."""
     if not pathlib.Path(user_profile).is_dir():
-        raise argparse.ArgumentTypeError(f"No such directory: {user_profile}.")
+        raise PathNotFoundError(user_profile)
 
     return user_profile
 
