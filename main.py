@@ -1,3 +1,5 @@
+"""Video downloader for specific websites."""
+
 import argparse
 import logging
 import pathlib

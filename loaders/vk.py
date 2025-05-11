@@ -1,3 +1,5 @@
+"""Contains functionality for loading videos from vkvideo.ru."""
+
 import urllib.parse as urlparser
 
 from selenium.common import NoSuchElementException

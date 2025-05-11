@@ -1,3 +1,5 @@
+"""Contains base functionality for loading videos."""
+
 import logging
 import pathlib
 import re
