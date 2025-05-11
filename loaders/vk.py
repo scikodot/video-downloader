@@ -4,14 +4,19 @@ from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
+from typing_extensions import override
 
 from .base import LoaderBase
 
 
 class VkVideoLoader(LoaderBase):
-    def get_logger_name(self):
+    """Video loader for vkvideo.ru."""
+
+    @override
+    def get_logger_name(self) -> str:
         return __name__
 
+    @override
     def check_restrictions(self) -> str | None:
         # The video is only available for registered users and/or subscribers
         try:
@@ -32,6 +37,7 @@ class VkVideoLoader(LoaderBase):
         except NoSuchElementException:
             pass
 
+    @override
     def disable_autoplay(self) -> None:
         autoplay = (
             WebDriverWait(self.driver, self.timeout)
@@ -42,6 +48,7 @@ class VkVideoLoader(LoaderBase):
         if autoplay.get_attribute("data-value-checked") == "true":
             autoplay.click()
 
+    @override
     def get_title(self) -> str | None:
         title = (
             WebDriverWait(self.driver, self.timeout)
@@ -51,6 +58,7 @@ class VkVideoLoader(LoaderBase):
         )
         return title.get_attribute("innerText")
 
+    @override
     def get_qualities(self) -> set[int]:
         # Click the 'Settings' button
         self.logger.info("Waiting for Settings button to appear...")
@@ -89,7 +97,8 @@ class VkVideoLoader(LoaderBase):
         qualities = (int(qi.get_attribute("data-value")) for qi in quality_items)
         return { q for q in qualities if q > 0 }
 
-    def get_urls(self, qualities_num: int):
+    @override
+    def get_urls(self, q_num: int) -> dict[int, list[str]]:
         urls, count = {}, 0
         network_logs = self.driver.execute_script(
             "return window.performance.getEntriesByType('resource');")
@@ -112,7 +121,7 @@ class VkVideoLoader(LoaderBase):
             "Total number of performance entries: %s.",
             urls_num, len(network_logs))
 
-        if count >= 2 * qualities_num:
+        if count >= 2 * q_num:
             return urls
 
         # If there was not enough URLs, try to replay the video.

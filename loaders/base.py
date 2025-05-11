@@ -44,7 +44,10 @@ DEFAULT_TITLE_PREFIX = "video_"
 DEFAULT_EXTENSION = ".mp4"
 
 class LoaderBase(metaclass=ABCMeta):
+    """Base class for video loader classes."""
+
     def __init__(self, **kwargs: Any) -> None:
+        """Create a new instance of the loader class."""
         options = webdriver.ChromeOptions()
         if "user_profile" in kwargs:
             path = pathlib.Path(kwargs["user_profile"])
@@ -52,8 +55,9 @@ class LoaderBase(metaclass=ABCMeta):
             options.add_argument(f"--user-data-dir={path.parent}")
             options.add_argument(f"--profile-directory={path.name}")
 
+         # Hide browser GUI
         if kwargs["headless"]:
-            options.add_argument("--headless=new")  # Hide browser GUI
+            options.add_argument("--headless=new")
 
         options.add_argument("--mute-audio")  # Mute the browser
         # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
@@ -213,35 +217,44 @@ class LoaderBase(metaclass=ABCMeta):
 
     @abstractmethod
     def get_logger_name(self) -> str:
+        """Get the name of the logger used by this class."""
         ...
 
     @abstractmethod
     def check_restrictions(self) -> str | None:
+        """Check whether the video is available.
+
+        Returns a message describing the existing restrictions
+        if present, and ``None`` otherwise.
+        """
         ...
 
     @abstractmethod
     def disable_autoplay(self) -> None:
+        """Disable the Autoplay button if one exists."""
         ...
 
     @abstractmethod
     def get_title(self) -> str | None:
+        """Get the video title if one exists."""
         ...
 
-    # Returns a set of available qualities.
     @abstractmethod
     def get_qualities(self) -> set[int]:
+        """Get a set of available qualities."""
         ...
 
-    # Returns a list of direct URLs for the audio/video content.
-    # This method must return at most 2*Q_n URLs,
-    # where Q_n is the number of available qualities.
-    # It is assumed that at the moment this method is called,
-    # all audio/video resources are already loaded.
     @abstractmethod
-    def get_urls(self, qualities_num: int) -> list:
+    def get_urls(self, q_num: int) -> dict[int, list[str]]:
+        """Get a list of direct URLs for audio/video content.
+
+        This method is expected to return at least 2*``q_num`` URLs,
+        where ``q_num`` is the number of available qualities.
+        """
         ...
 
     def get(self, url: str) -> None:
+        """Navigate the URL, locate the video and load it."""
         self.driver.get(url)
 
         # First, check if the video is accessible
@@ -267,7 +280,7 @@ class LoaderBase(metaclass=ABCMeta):
 
         # Ensure the extension is present and correct
         suffix = self.output_path.suffix
-        if (not suffix 
+        if (not suffix
             or not (info := moviepy.tools.extensions_dict.get(suffix[1:]))
             or info["type"] != "video"):
             self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)

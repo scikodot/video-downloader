@@ -18,13 +18,17 @@ DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
 class ArgumentParserCustom(argparse.ArgumentParser):
+    """Custom argument parser that adds extra formatting for help messages."""
+
     def add_argument(self, *args: Any, **kwargs: Any) -> argparse.Action:
-        # Add empty line after every help message to visually separate entries
+        """Add a blank line after every help message to visually separate entries."""
         if "help" in kwargs:
             kwargs["help"] += "\n \n"
+
         return super().add_argument(*args, **kwargs)
 
 def validate_url(url: str) -> str:
+    """Assert that the provided URL is valid."""
     if not validators.url(url):
         raise argparse.ArgumentTypeError("Invalid URL.")
 
@@ -32,10 +36,12 @@ def validate_url(url: str) -> str:
 
 # TODO: consider replacing pathlib.Path with Path
 def get_default_output_path() -> pathlib.Path:
+    """Get the default output path for downloaded videos."""
     directory = pathlib.Path(__file__).parent.resolve()
     return directory / DEFAULT_OUTPUT_SUBPATH
 
 def validate_output_path(output_path: str) -> str:
+    """Assert that the provided output path is valid."""
     path = pathlib.Path(output_path)
     if not path.is_absolute():
         output_path = get_default_output_path() / output_path
@@ -45,6 +51,7 @@ def validate_output_path(output_path: str) -> str:
     return output_path
 
 def validate_rate(rate: int) -> int:
+    """Assert that the provided download rate is valid."""
     rate = int(rate)
     if rate < MINIMUM_RATE:
         raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_RATE} KB(-s).")
@@ -52,6 +59,7 @@ def validate_rate(rate: int) -> int:
     return rate
 
 def validate_quality(quality: int) -> int:
+    """Assert that the required quality is valid."""
     quality = int(quality)
     if quality < MINIMUM_QUALITY:
         raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_QUALITY}p.")
@@ -59,6 +67,7 @@ def validate_quality(quality: int) -> int:
     return quality
 
 def validate_timeout(timeout: int) -> int:
+    """Assert that the provided timeout is valid."""
     timeout = int(timeout)
     if timeout < MINIMUM_TIMEOUT:
         raise argparse.ArgumentTypeError(f"Too small value, must be at least {MINIMUM_TIMEOUT} second(-s).")
@@ -66,12 +75,14 @@ def validate_timeout(timeout: int) -> int:
     return timeout
 
 def validate_user_profile(user_profile: str) -> str:
+    """Assert that the provided user profile is available."""
     if not pathlib.Path(user_profile).is_dir():
         raise argparse.ArgumentTypeError(f"No such directory: {user_profile}.")
 
     return user_profile
 
 def get_loader_class(url: str) -> tuple[str, LoaderBase | None]:
+    """Get the corresponding loader class for the specified URL."""
     parsed_url = urlparser.urlparse(url)
     if parsed_url.netloc.endswith("vkvideo.ru"):
         return (parsed_url.netloc, VkVideoLoader)
@@ -79,6 +90,7 @@ def get_loader_class(url: str) -> tuple[str, LoaderBase | None]:
     return (parsed_url.netloc, None)
 
 def main() -> None:
+    """Entry point for the video downloader."""
     parser = ArgumentParserCustom(
         prog=PROGRAM_NAME,
         formatter_class=argparse.RawTextHelpFormatter,
