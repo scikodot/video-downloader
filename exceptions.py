@@ -18,7 +18,7 @@ class ParameterizedError(Exception):
     """
 
     # ClassVar's are excluded from @dataclass workflow.
-    # This field will not make it way to __init__, etc.
+    # This field will not make its way to __init__, etc.
     # TODO: consider converting to a property
     _message: ClassVar[str]
 
@@ -52,3 +52,6 @@ class TooSmallValueError(ParameterizedError):
     lower_bound: int | float
     units: str
     indent: str = " "
+
+class QualityNotFoundError(Exception):
+    """Thrown when the quality value cannot be found and ``--exact`` flag is used."""

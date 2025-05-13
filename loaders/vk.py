@@ -100,7 +100,7 @@ class VkVideoLoader(LoaderBase):
         return { q for q in qualities if q > 0 }
 
     @override
-    def get_urls(self, q_num: int) -> dict[int, list[str]]:
+    def get_urls(self) -> dict[int, list[str]]:
         urls, count = {}, 0
         network_logs = self.driver.execute_script(
             "return window.performance.getEntriesByType('resource');")
@@ -123,7 +123,7 @@ class VkVideoLoader(LoaderBase):
             "Total number of performance entries: %s.",
             urls_num, len(network_logs))
 
-        if count >= 2 * q_num:
+        if count >= 2 * len(self.qualities):
             return urls
 
         # If there was not enough URLs, try to replay the video.

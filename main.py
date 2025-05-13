@@ -199,14 +199,6 @@ def main() -> None:
 
     logger.debug("Args: %s", vars(args))
 
-    # Ensure the output path directory exists.
-    # Use suffix to determine if the path points to a file or a directory.
-    # This correctly assumes that entries like "folder/.ext" have no suffix,
-    # i. e. they are directories.
-    output_path = pathlib.Path(args.output_path)
-    output_path_dir = output_path.parent if output_path.suffix else output_path
-    pathlib.Path.mkdir(output_path_dir, parents=True, exist_ok=True)
-
     logger.info("Setting up loader...")
     netloc, loader_class = get_loader_class(args.url)
     if not loader_class:

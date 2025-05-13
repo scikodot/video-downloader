@@ -1,11 +1,12 @@
 """Contains base functionality for loading videos."""
 
+import datetime
 import logging
 import pathlib
 import re
 import tempfile
 from abc import ABCMeta, abstractmethod
-from datetime import datetime
+from datetime import datetime as dt
 from typing import Any
 
 import moviepy
@@ -16,6 +17,8 @@ from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium import webdriver
 from selenium.common import TimeoutException
 from selenium.webdriver.support.wait import WebDriverWait
+
+from exceptions import QualityNotFoundError
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -42,7 +45,7 @@ DEFAULT_CHROME_SWITCHES = [
 PERF_BUFFER_SIZE = 1000
 RESPONSE_OK_CODES = range(200, 300)
 
-DEFAULT_TITLE_PREFIX = "video_"
+DEFAULT_TITLE_PREFIX = "video"
 DEFAULT_EXTENSION = ".mp4"
 
 class LoaderBase(metaclass=ABCMeta):
@@ -78,6 +81,9 @@ class LoaderBase(metaclass=ABCMeta):
         self.overwrite = kwargs["overwrite"]
         self.logger = logging.getLogger(self.get_logger_name())
 
+        self._ensure_no_file_or_can_overwrite()
+        self._ensure_output_directory_exists()
+
         # Increase resource timing buffer size.
         # The default of 250 is not always enough.
         self.driver.execute_cdp_cmd(
@@ -106,7 +112,7 @@ class LoaderBase(metaclass=ABCMeta):
 
         return response
 
-    # TODO: replace info type with namedtuple
+    # TODO: replace info type with namedtuple or dataclass
     def _download_file_by_info(self, session: requests.Session, info: dict) -> None:
         url, bytes_pos = info["url"], info["bytes_pos"]
         with pathlib.Path(info["path"]).open("ab") as file:
@@ -217,6 +223,100 @@ class LoaderBase(metaclass=ABCMeta):
 
         return pairs[target_urls_type]
 
+    def _ensure_video_accessible(self) -> None:
+        access_restricted_msg = self.check_restrictions()
+        if access_restricted_msg:
+            self.logger.error(
+                "Could not access the video. Reason: %s", access_restricted_msg)
+            return
+
+    def _ensure_filename_present_and_valid(self) -> None:
+        if not self.output_path.suffix:
+            # Get the video title
+            try:
+                title = self.get_title().strip()
+
+                # Remove invalid characters from the title
+                invalid_chars = set()
+                parts = title.split()  # Split by sequences of whitespaces
+                title_valid = "_".join(
+                    "".join(
+                        ch if (ch.isalnum() or ch == "_")
+                        else (invalid_chars.add(ch) or "")  # Always empty string
+                        for ch in part
+                    ) for part in parts
+                )
+
+                if invalid_chars:
+                    self.logger.warning(
+                        "Title '%s' contains invalid characters: %s. "
+                        "Title '%s' will be used instead.",
+                        title, invalid_chars, title_valid)
+
+                self.output_path /= title
+
+            # Use a timestamp-based one if none found
+            except TimeoutException:
+                timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+                title = f"{DEFAULT_TITLE_PREFIX}_{timestamp}"
+                self.logger.exception(
+                    "Could not find video title. Using '%s' instead.", title)
+
+    def _ensure_extension_present_and_valid(self) -> None:
+        suffix = self.output_path.suffix
+        if (not suffix
+            or not (info := moviepy.tools.extensions_dict.get(suffix[1:]))
+            or info["type"] != "video"):
+            self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)
+
+    def _ensure_no_file_or_can_overwrite(self) -> None:
+        if self.output_path.suffix and self.output_path.exists() and not self.overwrite:
+            self.logger.error(
+                "Cannot save the video to the already existing file '%s'. "
+                "Use '--overwrite' argument to be able to overwrite the existing file.",
+                self.output_path)
+            return
+
+    def _ensure_output_directory_exists(self) -> None:
+        # Use suffix to determine if the path points to a file or a directory.
+        # This correctly assumes that entries like "folder/.ext" have no suffix,
+        # i. e. they are directories.
+        directory = self.output_path
+        if self.output_path.suffix:
+            directory = directory.parent
+        pathlib.Path.mkdir(directory, parents=True, exist_ok=True)
+
+    def _get_target_quality(self) -> None:
+        self.qualities = self.get_qualities()
+        target_quality = 0
+        for q in self.qualities:
+            if target_quality < q <= self.quality:
+                target_quality = q
+
+        self.logger.debug(
+            "Qualities: %s", ", ".join(f"{q}p" for q in sorted(self.qualities)))
+        if target_quality < self.quality:
+            if self.exact:
+                raise QualityNotFoundError
+
+            self.logger.info(
+                "Could not find quality value %sp. "
+                "Using the nearest lower quality: %sp.",
+                self.quality, target_quality)
+
+        return target_quality
+
+    # TODO: replace dict with namedtuple or dataclass
+    def _get_av_urls(self) -> dict[str, list]:
+        urls = (
+            WebDriverWait(self.driver, self.timeout)
+            .until(lambda: self.get_urls())
+        )
+        for urls_type, urls_list in urls.items():
+            self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
+
+        return urls
+
     @abstractmethod
     def get_logger_name(self) -> str:
         """Get the name of the logger used by this class."""
@@ -247,7 +347,7 @@ class LoaderBase(metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def get_urls(self, q_num: int) -> dict[int, list[str]]:
+    def get_urls(self) -> dict[int, list[str]]:
         """Get a list of direct URLs for audio/video content.
 
         This method is expected to return at least 2*``q_num`` URLs,
@@ -256,75 +356,35 @@ class LoaderBase(metaclass=ABCMeta):
         ...
 
     def get(self, url: str) -> None:
-        """Navigate the URL, locate the video and load it."""
+        """Navigate to ``url``, locate the video and load it."""
         self.driver.get(url)
 
-        # First, check if the video is accessible
-        access_restricted_msg = self.check_restrictions()
-        if access_restricted_msg:
-            self.logger.error(
-                "Could not access the video. Reason: %s", access_restricted_msg)
-            return
-
-        # No filename was provided
-        if not self.output_path.suffix:
-            # Get the video title
-            try:
-                title = self.get_title().strip()
-                self.output_path /= title
-
-            # Use a timestamp-based one if none found
-            except TimeoutException:
-                timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
-                title = DEFAULT_TITLE_PREFIX + timestamp
-                self.logger.exception(
-                    "Could not find video title. Using '%s' instead.", title)
-
-        # Ensure the extension is present and correct
-        suffix = self.output_path.suffix
-        if (not suffix
-            or not (info := moviepy.tools.extensions_dict.get(suffix[1:]))
-            or info["type"] != "video"):
-            self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)
-
-        # Ensure the file does not exist or if it can be overwritten
-        if self.output_path.exists() and not self.overwrite:
-            self.logger.error(
-                "Cannot save the video to the already existing file '%s'. "
-                "Use '--overwrite' argument to be able to overwrite the existing file.",
-                self.output_path)
-            return
+        self._ensure_video_accessible()
+        self._ensure_filename_present_and_valid()
+        self._ensure_extension_present_and_valid()
+        self._ensure_no_file_or_can_overwrite()
 
         try:
             self.disable_autoplay()
         except TimeoutException:
-            self.logger.exception("Could not find an autoplay button to click.")
+            self.logger.exception(
+                "Could not find an autoplay button to click, operation timed out.")
 
         try:
-            qualities = self.get_qualities()
-            target_quality = 0
-            for q in qualities:
-                if target_quality < q <= self.quality:
-                    target_quality = q
+            target_quality = self._get_target_quality()
+        except QualityNotFoundError:
+            self.logger.exception(
+                "Could not find quality value of exactly %sp, "
+                "as required by --exact flag.",
+                self.quality)
+            return
+        except TimeoutException:
+            self.logger.exception(
+                "Could not obtain the available qualities, operation timed out.")
+            return
 
-            self.logger.debug(
-                "Qualities: %s", ", ".join(f"{q}p" for q in sorted(qualities)))
-            if target_quality < self.quality:
-                self.logger.info("Could not find quality value %sp.", self.quality)
-                if self.exact:
-                    self.logger.info("Exiting, because the '--exact' option was used.")
-                    return
-
-                self.logger.info(
-                    "Using the nearest lower quality: %sp.", target_quality)
-
-            urls = (
-                WebDriverWait(self.driver, self.timeout)
-                .until(lambda _: self.get_urls(len(qualities)))
-            )
-            for urls_type, urls_list in urls.items():
-                self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
-
+        try:
+            urls = self._get_av_urls()
         except TimeoutException:
             self.logger.exception(
                 "Could not obtain the required URLs due to a timeout.")
@@ -346,6 +406,9 @@ class LoaderBase(metaclass=ABCMeta):
                 self._download_file_by_info(session, video_info)
 
                 # Merge the downloaded files into one (audio + video)
+                # TODO: if the file could not be saved to output path (for any reason:
+                # missing directory, existing file without --overwrite, etc.),
+                # either keep it in this temp dir or move to some safe dir
                 with (
                     AudioFileClip(audio_info["path"]) as audio,
                     VideoFileClip(video_info["path"]) as video,
