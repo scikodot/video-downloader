@@ -53,5 +53,6 @@ class TooSmallValueError(ParameterizedError):
     units: str
     indent: str = " "
 
+
 class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""

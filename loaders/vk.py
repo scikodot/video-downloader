@@ -1,7 +1,11 @@
 """Contains functionality for loading videos from vkvideo.ru."""
 
+import pathlib
 import urllib.parse as urlparser
+from collections.abc import Iterable
 
+import requests
+from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
@@ -99,8 +103,7 @@ class VkVideoLoader(LoaderBase):
         qualities = (int(qi.get_attribute("data-value")) for qi in quality_items)
         return { q for q in qualities if q > 0 }
 
-    @override
-    def get_urls(self) -> dict[int, list[str]]:
+    def _get_urls_by_type(self) -> dict[int, list[str]]:
         urls, count = {}, 0
         network_logs = self.driver.execute_script(
             "return window.performance.getEntriesByType('resource');")
@@ -113,8 +116,8 @@ class VkVideoLoader(LoaderBase):
                     query_type = query["type"][0]
                     if query_type not in urls:
                         urls[query_type] = []
-                    bytes_pos = name.find("bytes")
-                    urls[query_type].append((name, bytes_pos + 6))
+
+                    urls[query_type].append(name)
                     count += 1
 
         urls_num = {k: len(v) for k, v in urls.items()}
@@ -149,3 +152,86 @@ class VkVideoLoader(LoaderBase):
             self.logger.exception("Could not locate video UI element.")
 
         return False
+
+    def _get_file_parts_urls(self, url: str) -> Iterable[str]:
+        bytes_pos = url.find("bytes") + 6
+        bytes_start, bytes_num = 0, self.rate * 1024
+        while True:  # OK as this is a generator
+            # TODO: consider constructing URL from the previously parsed one
+            bytes_end = bytes_start + bytes_num - 1
+            url = url[:bytes_pos] + f"{bytes_start}-{bytes_end}"
+            self.logger.debug("URL: %s", url)
+            yield url
+
+            content_length = getattr(self, "_content_length", None)
+            if not content_length:
+                self.logger.error(
+                    "Could not obtain content length to determine "
+                    "URL generator exit condition. Exiting.")
+                return
+
+            # Last loaded packet is smaller than required => file is exhausted
+            if self._content_length < bytes_num:
+                break
+
+            bytes_start += bytes_num
+
+    # TODO: replace dict with namedtuple or dataclass
+    @override
+    def get_urls(
+            self,
+            session: requests.Session,
+            directory: pathlib.Path) -> dict[str, Iterable[str] | str]:
+        urls = (
+            WebDriverWait(self.driver, self.timeout)
+            .until(lambda _: self._get_urls_by_type())
+        )
+        for urls_type, urls_list in urls.items():
+            self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
+
+        pairs = { k: {} for k in urls }
+        target_urls_type = None
+        for urls_type, urls_list in urls.items():
+            for url in urls_list:
+                # TODO: consider getting full file size from Content-Range header
+                response = self._download_file(session, url)
+
+                content_type = response.headers.get("Content-Type", "")
+                if not content_type.startswith(("audio", "video")):
+                    raise ValueError("Inappropriate MIME-type.")
+
+                filename = content_type.replace("/", f".type{urls_type}.")
+                filepath = directory / filename
+                self.logger.debug("Filepath: %s", str(filepath))
+
+                self._write_file(response, filepath)
+
+                filename = content_type.replace("/", ".")
+                if content_type.startswith("audio"):
+                    pairs[urls_type]["audio"] = {
+                        "urls": self._get_file_parts_urls(url),
+                        "path": directory / filename,
+                    }
+                else:
+                    pairs[urls_type]["video"] = {
+                        "urls": self._get_file_parts_urls(url),
+                        "path": directory / filename,
+                    }
+
+                    # Don't check duration, as it may not be recognized
+                    # for incomplete files.
+                    infos = ffmpeg_parse_infos(str(filepath), check_duration=False)
+                    self.logger.debug("Infos: %s", infos)
+
+                    # Here, we take the minimum of width and height to also handle
+                    # non-standard aspect ratios.
+                    # In other words, 144p, 240p, etc. can also stand for width
+                    # rather than height only.
+                    quality = min(infos["video_size"])
+                    if quality == self.target_quality:
+                        target_urls_type = urls_type
+
+        if not target_urls_type:
+            raise ValueError(f"Could not find content with the quality value of {self.target_quality}p.")
+
+        return pairs[target_urls_type]

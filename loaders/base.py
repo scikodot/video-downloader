@@ -6,6 +6,7 @@ import pathlib
 import re
 import tempfile
 from abc import ABCMeta, abstractmethod
+from collections.abc import Iterable
 from datetime import datetime as dt
 from typing import Any
 
@@ -13,10 +14,8 @@ import moviepy
 import moviepy.tools
 import requests
 from moviepy import AudioFileClip, VideoFileClip
-from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium import webdriver
 from selenium.common import TimeoutException
-from selenium.webdriver.support.wait import WebDriverWait
 
 from exceptions import QualityNotFoundError
 
@@ -45,7 +44,8 @@ DEFAULT_CHROME_SWITCHES = [
 PERF_BUFFER_SIZE = 1000
 RESPONSE_OK_CODES = range(200, 300)
 
-DEFAULT_TITLE_PREFIX = "video"
+DEFAULT_VIDEO_PREFIX = "video"
+DEFAULT_AUDIO_PREFIX = "audio"
 DEFAULT_EXTENSION = ".mp4"
 
 class LoaderBase(metaclass=ABCMeta):
@@ -114,33 +114,24 @@ class LoaderBase(metaclass=ABCMeta):
 
     # TODO: replace info type with namedtuple or dataclass
     def _download_file_by_info(self, session: requests.Session, info: dict) -> None:
-        url, bytes_pos = info["url"], info["bytes_pos"]
         with pathlib.Path(info["path"]).open("ab") as file:
-            bytes_start, bytes_num = 0, self.rate * 1024
-            finished = False
-            while not finished:
-                # TODO: consider constructing URL from the previously parsed one
-                bytes_end = bytes_start + bytes_num - 1
-                url = url[:bytes_pos] + f"{bytes_start}-{bytes_end}"
-                self.logger.debug("URL: %s", url)
-
+            for url in info["urls"]:
                 response = self._download_file(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
                     self.logger.error(
-                        "Download request for bytes (%s, %s) "
-                        "failed with code %s, exiting...",
-                        bytes_start, bytes_end, response.status_code)
+                        "Download request for %s failed with code %s, exiting...",
+                        url, response.status_code)
                     break
 
                 # Get the packet size.
                 headers = response.headers
                 content_length = 0
-                if "Content-Length" in headers:
-                    content_length = int(headers["Content-Length"])
-                elif "Content-Range" in headers:
+                if "Content-Range" in headers:
                     content_range = re.split(r"\s|-|/", headers["Content-Range"])
-                    start, end = int(content_range[1]), int(content_range[2])
+                    start, end = (int(x) for x in content_range[1:3])
                     content_length = end - start
+                elif "Content-Length" in headers:
+                    content_length = int(headers["Content-Length"])
                 # If no headers are present for content length,
                 # calculate it from the actual content.
                 else:
@@ -148,9 +139,8 @@ class LoaderBase(metaclass=ABCMeta):
                         len(chunk) for chunk
                         in response.iter_content(chunk_size=128))
 
-                # Packet is smaller than required => file is exhausted.
-                if content_length < bytes_num:
-                    finished = True
+                # Set the obtained content length for the generator
+                self._content_length = content_length
 
                 # Packet is empty => previous packet was the last.
                 # Negative check is required,
@@ -161,67 +151,10 @@ class LoaderBase(metaclass=ABCMeta):
                 for chunk in response.iter_content(chunk_size=128):
                     file.write(chunk)
 
-                bytes_start += bytes_num
-
     def _write_file(self, response: requests.Response, filepath: pathlib.Path) -> None:
         with pathlib.Path(filepath).open("wb") as f:
             for chunk in response.iter_content(chunk_size=128):
                 f.write(chunk)
-
-    def _filter_urls(
-            self,
-            session: requests.Session,
-            directory: str,
-            urls: dict,
-            target_quality: int) -> dict:
-        pairs = { k: {} for k in urls }
-        target_urls_type = None
-        for urls_type, urls_list in urls.items():
-            for url, bytes_pos in urls_list:
-                response = self._download_file(session, url)
-
-                content_type = response.headers.get("Content-Type", "")
-                if not content_type.startswith(("audio", "video")):
-                    raise ValueError("Inappropriate MIME-type.")
-
-                filename = content_type.replace("/", f".type{urls_type}.")
-                filepath = pathlib.Path(directory) / filename
-                self.logger.debug("Filepath: %s", str(filepath))
-
-                self._write_file(response, filepath)
-
-                filename = content_type.replace("/", ".")
-                if content_type.startswith("audio"):
-                    pairs[urls_type]["audio"] = {
-                        "url": url,
-                        "bytes_pos": bytes_pos,
-                        "path": pathlib.Path(directory) / filename,
-                    }
-                else:
-                    # Don't check duration, as it may not be recognized
-                    # for incomplete files.
-                    infos = ffmpeg_parse_infos(str(filepath), check_duration=False)
-                    self.logger.debug("Infos: %s", infos)
-
-                    # Here, we take the minimum of width and height to also handle
-                    # non-standard aspect ratios.
-                    # In other words, 144p, 240p, etc. can also stand for width
-                    # rather than height only.
-                    quality = min(infos["video_size"])
-                    pairs[urls_type]["video"] = {
-                        "url": url,
-                        "bytes_pos": bytes_pos,
-                        "path": pathlib.Path(directory) / filename,
-                        "quality": quality,
-                    }
-
-                    if quality == target_quality:
-                        target_urls_type = urls_type
-
-        if not target_urls_type:
-            raise ValueError(f"Could not find content with the quality value of {target_quality}p.")
-
-        return pairs[target_urls_type]
 
     def _ensure_video_accessible(self) -> None:
         access_restricted_msg = self.check_restrictions()
@@ -229,6 +162,10 @@ class LoaderBase(metaclass=ABCMeta):
             self.logger.error(
                 "Could not access the video. Reason: %s", access_restricted_msg)
             return
+
+    def _get_filename_with_timestamp(self, prefix: str) -> str:
+        timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+        return f"{prefix}_{timestamp}"
 
     def _ensure_filename_present_and_valid(self) -> None:
         if not self.output_path.suffix:
@@ -253,14 +190,15 @@ class LoaderBase(metaclass=ABCMeta):
                         "Title '%s' will be used instead.",
                         title, invalid_chars, title_valid)
 
-                self.output_path /= title
+                title = title_valid
 
             # Use a timestamp-based one if none found
             except TimeoutException:
-                timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
-                title = f"{DEFAULT_TITLE_PREFIX}_{timestamp}"
+                title = self._get_filename_with_timestamp(DEFAULT_VIDEO_PREFIX)
                 self.logger.exception(
                     "Could not find video title. Using '%s' instead.", title)
+
+            self.output_path /= title
 
     def _ensure_extension_present_and_valid(self) -> None:
         suffix = self.output_path.suffix
@@ -306,17 +244,6 @@ class LoaderBase(metaclass=ABCMeta):
 
         return target_quality
 
-    # TODO: replace dict with namedtuple or dataclass
-    def _get_av_urls(self) -> dict[str, list]:
-        urls = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(lambda: self.get_urls())
-        )
-        for urls_type, urls_list in urls.items():
-            self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
-
-        return urls
-
     @abstractmethod
     def get_logger_name(self) -> str:
         """Get the name of the logger used by this class."""
@@ -347,7 +274,10 @@ class LoaderBase(metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def get_urls(self) -> dict[int, list[str]]:
+    def get_urls(
+        self,
+        session: requests.Session,
+        directory: pathlib.Path) -> dict[int, Iterable[str] | str]:
         """Get a list of direct URLs for audio/video content.
 
         This method is expected to return at least 2*``q_num`` URLs,
@@ -371,7 +301,7 @@ class LoaderBase(metaclass=ABCMeta):
                 "Could not find an autoplay button to click, operation timed out.")
 
         try:
-            target_quality = self._get_target_quality()
+            self.target_quality = self._get_target_quality()
         except QualityNotFoundError:
             self.logger.exception(
                 "Could not find quality value of exactly %sp, "
@@ -384,24 +314,21 @@ class LoaderBase(metaclass=ABCMeta):
             return
 
         try:
-            urls = self._get_av_urls()
-        except TimeoutException:
-            self.logger.exception(
-                "Could not obtain the required URLs due to a timeout.")
-            return
-
-        # Open a new session and copy user agent and cookies to it.
-        # This is required so that this session is allowed to access
-        # the previously obtained URLs.
-        with requests.Session() as session:
-            self._copy_cookies(session)
-            with tempfile.TemporaryDirectory() as directory:
+            with (
+                requests.Session() as session,
+                tempfile.TemporaryDirectory() as directory,
+            ):
                 self.logger.debug("Temporary directory: %s", directory)
 
-                target = self._filter_urls(session, directory, urls, target_quality)
+                # Copy user agent and cookies to the new session.
+                # This is required so that this session is allowed to access
+                # the previously obtained URLs.
+                self._copy_cookies(session)
 
-                audio_info = target["audio"]
-                video_info = target["video"]
+                urls = self.get_urls(session, pathlib.Path(directory))
+
+                audio_info = urls["audio"]
+                video_info = urls["video"]
                 self._download_file_by_info(session, audio_info)
                 self._download_file_by_info(session, video_info)
 
@@ -414,3 +341,7 @@ class LoaderBase(metaclass=ABCMeta):
                     VideoFileClip(video_info["path"]) as video,
                 ):
                     video.with_audio(audio).write_videofile(self.output_path)
+        except TimeoutException:
+            self.logger.exception(
+                "Could not obtain the required URLs due to a timeout.")
+            return
