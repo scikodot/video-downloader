@@ -17,7 +17,11 @@ from moviepy import AudioFileClip, VideoFileClip
 from selenium import webdriver
 from selenium.common import TimeoutException
 
-from exceptions import QualityNotFoundError
+from exceptions import (
+    AccessRestrictedError,
+    FileAlreadyExistsError,
+    QualityNotFoundError,
+)
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -159,9 +163,7 @@ class LoaderBase(metaclass=ABCMeta):
     def _ensure_video_accessible(self) -> None:
         access_restricted_msg = self.check_restrictions()
         if access_restricted_msg:
-            self.logger.error(
-                "Could not access the video. Reason: %s", access_restricted_msg)
-            return
+            raise AccessRestrictedError(access_restricted_msg)
 
     def _get_filename_with_timestamp(self, prefix: str) -> str:
         timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
@@ -209,11 +211,7 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _ensure_no_file_or_can_overwrite(self) -> None:
         if self.output_path.suffix and self.output_path.exists() and not self.overwrite:
-            self.logger.error(
-                "Cannot save the video to the already existing file '%s'. "
-                "Use '--overwrite' argument to be able to overwrite the existing file.",
-                self.output_path)
-            return
+            raise FileAlreadyExistsError
 
     def _ensure_output_directory_exists(self) -> None:
         # Use suffix to determine if the path points to a file or a directory.
@@ -289,10 +287,23 @@ class LoaderBase(metaclass=ABCMeta):
         """Navigate to ``url``, locate the video and load it."""
         self.driver.get(url)
 
-        self._ensure_video_accessible()
-        self._ensure_filename_present_and_valid()
-        self._ensure_extension_present_and_valid()
-        self._ensure_no_file_or_can_overwrite()
+        try:
+            self._ensure_video_accessible()
+            self._ensure_filename_present_and_valid()
+            self._ensure_extension_present_and_valid()
+            self._ensure_no_file_or_can_overwrite()
+
+        # These are intended for the user.
+        # No need to use logger.exception with traceback, etc.
+        except AccessRestrictedError as ex:
+            self.logger.error("Could not access the video. Reason: %s", ex) # noqa: TRY400
+            return
+        except FileAlreadyExistsError:
+            self.logger.error(  # noqa: TRY400
+                "Cannot save the video to the already existing file '%s'. "
+                "Use '--overwrite' argument to be able to overwrite the existing file.",
+                self.output_path)
+            return
 
         try:
             self.disable_autoplay()

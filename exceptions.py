@@ -56,3 +56,11 @@ class TooSmallValueError(ParameterizedError):
 
 class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""
+
+
+class AccessRestrictedError(Exception):
+    """Thrown when the video could not be accessed for whatever reason."""
+
+
+class FileAlreadyExistsError(Exception):
+    """Thrown when the file already exists and ``--overwrite`` flag is not used."""
