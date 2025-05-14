@@ -15,6 +15,18 @@ from loaders.vk import VkVideoLoader
 
 PROGRAM_NAME = "video-downloader"
 
+MAX_PACKAGE_VERBOSITY = 2
+VERBOSITY_LEVELS = {
+    # Package level logging, i. e. only current package
+    0: "WARNING",
+    1: "INFO",
+    2: "DEBUG",
+
+    # Root level logging, i. e. all used packages
+    3: "INFO",
+    4: "DEBUG",
+}
+
 DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_RATE, MINIMUM_RATE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
@@ -183,19 +195,26 @@ def main() -> None:
     parser.add_argument(
         "-v", "--verbose",
         help="Show detailed information about performed actions.",
-        action="store_true")
+        action="count",
+        default=0)
 
     args = parser.parse_args()
 
-    # Set common (root) logger format and verbosity level
-    # TODO: consider adding 3 verbosity levels:
-    # -v: messages of level INFO or higher
-    # -vv: messages of level DEBUG or higher (this package only)
-    # -vvv: messages of level DEBUG or higher (all used packages, like selenium, etc.)
-    logging.basicConfig(
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        level="DEBUG" if args.verbose else "WARNING")
-    logger = logging.getLogger("root")
+    verbosity = args.verbose
+    # Use local package logger
+    if verbosity <= MAX_PACKAGE_VERBOSITY:
+        logger = logging.getLogger("loaders")
+        logger.setLevel(VERBOSITY_LEVELS[verbosity])
+    # Use root logger that can be used by all packages
+    else:
+        logger = logging.getLogger("root")
+        level = min(verbosity, len(VERBOSITY_LEVELS) - 1)
+        logger.setLevel(VERBOSITY_LEVELS[level])
+
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
     logger.debug("Args: %s", vars(args))
 
