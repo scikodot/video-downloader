@@ -177,13 +177,17 @@ class LoaderBase(metaclass=ABCMeta):
 
                 # Remove invalid characters from the title
                 invalid_chars = set()
+                def process_char(ch: str) -> str:
+                    if ch.isalnum():
+                        return ch
+                    if ch != "_":
+                        invalid_chars.add(ch)
+                    return ""
+
                 parts = title.split()  # Split by sequences of whitespaces
                 title_valid = "_".join(
-                    "".join(
-                        ch if (ch.isalnum() or ch == "_")
-                        else (invalid_chars.add(ch) or "")  # Always empty string
-                        for ch in part
-                    ) for part in parts
+                    "".join(process_char(ch) for ch in part)
+                    for part in parts
                 )
 
                 if invalid_chars:
