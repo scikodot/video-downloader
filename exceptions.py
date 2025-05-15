@@ -1,8 +1,38 @@
 """Contains various exceptions that may occur."""
 
+import io
+import logging
+import traceback
 from dataclasses import dataclass
 from typing import ClassVar
 
+# TODO: add typing_extensions to reqs
+from typing_extensions import override
+
+
+class ExceptionFormatter(logging.Formatter):
+    """Custom formatter for logging exceptions without stacktrace."""
+
+    @override
+    def formatException(self, ei: tuple) -> str:
+        sio = io.StringIO()
+        # Setting limit=0 prints exception without stacktrace.
+        traceback.print_exception(ei[0], ei[1], ei[2], limit=0, file=sio)
+        s = sio.getvalue()
+        sio.close()
+        if s[-1] == "\n":
+            s = s[:-1]
+        return f" | {s}"
+
+    @override
+    def format(self, record: logging.LogRecord) -> str:
+        s = super().format(record)
+        s = s.replace("\n", "")
+        # Disable caching exception info as that would prevent
+        # other formatters from getting its stacktrace.
+        if record.exc_text:
+            record.exc_text = None
+        return s
 
 @dataclass
 class ParameterizedError(Exception):
@@ -54,13 +84,33 @@ class TooSmallValueError(ParameterizedError):
     indent: str = " "
 
 
+@dataclass
+class GeneratorExitError(ParameterizedError):
+    """Thrown when it is unclear as to when the generator must exit."""
+
+    _message: ClassVar[str] = "Exit condition is undefined. {0}"
+    details: str = ""
+
+
 class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""
+
+
+class QualityContentNotFoundError(Exception):
+    """Thrown when a content of the specified quality could not be found."""
 
 
 class AccessRestrictedError(Exception):
     """Thrown when the video could not be accessed for whatever reason."""
 
 
-class FileAlreadyExistsError(Exception):
+class FileExistsNoOverwriteError(Exception):
     """Thrown when the file already exists and ``--overwrite`` flag is not used."""
+
+
+class InvalidMimeTypeError(Exception):
+    """Thrown when the MIME type of the retrieved content is invalid."""
+
+
+class DownloadRequestError(Exception):
+    """Thrown when the HTTP download request failed."""

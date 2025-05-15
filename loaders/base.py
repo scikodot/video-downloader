@@ -19,7 +19,11 @@ from selenium.common import TimeoutException
 
 from exceptions import (
     AccessRestrictedError,
-    FileAlreadyExistsError,
+    DownloadRequestError,
+    FileExistsNoOverwriteError,
+    GeneratorExitError,
+    InvalidMimeTypeError,
+    QualityContentNotFoundError,
     QualityNotFoundError,
 )
 
@@ -98,6 +102,9 @@ class LoaderBase(metaclass=ABCMeta):
         # Cached URLs are not listed in performance entries.
         self.driver.execute_cdp_cmd("Network.clearBrowserCache", {})
 
+    def _get_quality_with_units(self, quality: int) -> str:
+        return f"{quality}p"
+
     def _copy_cookies(self, session: requests.Session) -> None:
         selenium_user_agent = self.driver.execute_script("return navigator.userAgent;")
         self.logger.debug("User agent: %s", selenium_user_agent)
@@ -122,10 +129,10 @@ class LoaderBase(metaclass=ABCMeta):
             for url in info["urls"]:
                 response = self._download_file(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
-                    self.logger.error(
-                        "Download request for %s failed with code %s, exiting...",
-                        url, response.status_code)
-                    break
+                    raise DownloadRequestError({
+                        "url": url,
+                        "code": response.status_code,
+                    })
 
                 # Get the packet size.
                 headers = response.headers
@@ -215,7 +222,7 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _ensure_no_file_or_can_overwrite(self) -> None:
         if self.output_path.suffix and self.output_path.exists() and not self.overwrite:
-            raise FileAlreadyExistsError
+            raise FileExistsNoOverwriteError(self.output_path)
 
     def _ensure_output_directory_exists(self) -> None:
         # Use suffix to determine if the path points to a file or a directory.
@@ -226,18 +233,18 @@ class LoaderBase(metaclass=ABCMeta):
             directory = directory.parent
         pathlib.Path.mkdir(directory, parents=True, exist_ok=True)
 
-    def _get_target_quality(self) -> None:
+    def _get_target_quality(self) -> int:
         self.qualities = self.get_qualities()
         target_quality = 0
         for q in self.qualities:
             if target_quality < q <= self.quality:
                 target_quality = q
 
-        self.logger.debug(
-            "Qualities: %s", ", ".join(f"{q}p" for q in sorted(self.qualities)))
+        qs = ", ".join(self._get_quality_with_units(q) for q in sorted(self.qualities))
+        self.logger.debug("Qualities: %s", qs)
         if target_quality < self.quality:
             if self.exact:
-                raise QualityNotFoundError
+                raise QualityNotFoundError(self._get_quality_with_units(self.quality))
 
             self.logger.info(
                 "Could not find quality value %sp. "
@@ -296,17 +303,8 @@ class LoaderBase(metaclass=ABCMeta):
             self._ensure_filename_present_and_valid()
             self._ensure_extension_present_and_valid()
             self._ensure_no_file_or_can_overwrite()
-
-        # These are intended for the user.
-        # No need to use logger.exception with traceback, etc.
-        except AccessRestrictedError as ex:
-            self.logger.error("Could not access the video. Reason: %s", ex) # noqa: TRY400
-            return
-        except FileAlreadyExistsError:
-            self.logger.error(  # noqa: TRY400
-                "Cannot save the video to the already existing file '%s'. "
-                "Use '--overwrite' argument to be able to overwrite the existing file.",
-                self.output_path)
+        except AccessRestrictedError:
+            self.logger.exception("Could not access the video.")
             return
 
         try:
@@ -319,9 +317,7 @@ class LoaderBase(metaclass=ABCMeta):
             self.target_quality = self._get_target_quality()
         except QualityNotFoundError:
             self.logger.exception(
-                "Could not find quality value of exactly %sp, "
-                "as required by --exact flag.",
-                self.quality)
+                "Could not find exact quality value as required by --exact flag.")
             return
         except TimeoutException:
             self.logger.exception(
@@ -358,5 +354,14 @@ class LoaderBase(metaclass=ABCMeta):
                     video.with_audio(audio).write_videofile(self.output_path)
         except TimeoutException:
             self.logger.exception(
-                "Could not obtain the required URLs due to a timeout.")
-            return
+                "Could not obtain the required URLs, operation timed out.")
+        except InvalidMimeTypeError:
+            self.logger.exception("Could not recognize MIME type of the content.")
+        except QualityContentNotFoundError:
+            self.logger.exception("Could not find content with the required quality.")
+        except DownloadRequestError:
+            self.logger.exception("Could not download files due to a request error.")
+        except GeneratorExitError:
+            self.logger.exception("Could not download files due to a generator error.")
+
+        return

@@ -9,7 +9,13 @@ from typing import Any
 import validators
 from selenium.common.exceptions import WebDriverException
 
-from exceptions import PathNotFoundError, TooSmallValueError, UrlValidationError
+from exceptions import (
+    ExceptionFormatter,
+    FileExistsNoOverwriteError,
+    PathNotFoundError,
+    TooSmallValueError,
+    UrlValidationError,
+)
 from loaders.base import LoaderBase
 from loaders.vk import VkVideoLoader
 
@@ -212,7 +218,7 @@ def main() -> None:
         logger.setLevel(VERBOSITY_LEVELS[level])
 
     handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    formatter = ExceptionFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
@@ -221,22 +227,28 @@ def main() -> None:
     logger.info("Setting up loader...")
     netloc, loader_class = get_loader_class(args.url)
     if not loader_class:
-        logger.info(
+        logger.error(
             "Could not find loader for '%s'. Perhaps, it is not supported yet.", netloc)
+        logger.info("Exiting...")
         return
 
-    loader = loader_class(**vars(args))
     try:
+        loader = loader_class(**vars(args))
         logger.info("Navigating to %s...", args.url)
         loader.get(args.url)
+    except FileExistsNoOverwriteError:
+        loader.logger.exception(
+            "Cannot save the video to the already existing file. "
+            "Use '--overwrite' argument to be able to overwrite the existing file.")
     finally:
         logger.info("Closing driver...")
         try:
             loader.driver.close()
             loader.driver.quit()
-        except WebDriverException as ex:
-            logger.debug("Could not terminate the driver gracefully.\n%s", ex)
+        except WebDriverException:
+            logger.exception("Could not terminate the driver gracefully.")
 
+    logger.info("Exiting...")
     return
 
 if __name__ == "__main__":

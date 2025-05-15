@@ -12,7 +12,15 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
 
+from exceptions import (
+    GeneratorExitError,
+    InvalidMimeTypeError,
+    QualityContentNotFoundError,
+)
+
 from .base import LoaderBase
+
+VALID_MIME_TYPE_PREFIXES = ("audio", "video")
 
 
 class VkVideoLoader(LoaderBase):
@@ -165,10 +173,7 @@ class VkVideoLoader(LoaderBase):
 
             content_length = getattr(self, "_content_length", None)
             if not content_length:
-                self.logger.error(
-                    "Could not obtain content length to determine "
-                    "URL generator exit condition. Exiting.")
-                return
+                raise GeneratorExitError(details="No content length was provided.")
 
             # Last loaded packet is smaller than required => file is exhausted
             if self._content_length < bytes_num:
@@ -197,8 +202,8 @@ class VkVideoLoader(LoaderBase):
                 response = self._download_file(session, url)
 
                 content_type = response.headers.get("Content-Type", "")
-                if not content_type.startswith(("audio", "video")):
-                    raise ValueError("Inappropriate MIME-type.")
+                if not content_type.startswith(VALID_MIME_TYPE_PREFIXES):
+                    raise InvalidMimeTypeError(content_type)
 
                 filename = content_type.replace("/", f".type{urls_type}.")
                 filepath = directory / filename
@@ -232,6 +237,7 @@ class VkVideoLoader(LoaderBase):
                         target_urls_type = urls_type
 
         if not target_urls_type:
-            raise ValueError(f"Could not find content with the quality value of {self.target_quality}p.")
+            raise QualityContentNotFoundError(
+                self._get_quality_with_units(self.target_quality))
 
         return pairs[target_urls_type]
