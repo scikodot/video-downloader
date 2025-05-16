@@ -49,21 +49,18 @@ class ArgumentParserCustom(argparse.ArgumentParser):
 
         return super().add_argument(*args, **kwargs)
 
-def validate_url(url: str) -> str:
-    """Assert that the provided URL is valid."""
+def _validate_url(url: str) -> str:
     if not validators.url(url):
         raise UrlValidationError(url)
 
     return url
 
-# TODO: consider replacing pathlib.Path with Path
 def get_default_output_path() -> pathlib.Path:
     """Get the default output path for downloaded videos."""
     directory = pathlib.Path(__file__).parent.resolve()
     return directory / DEFAULT_OUTPUT_SUBPATH
 
-def validate_output_path(output_path: str) -> str:
-    """Assert that the provided output path is valid."""
+def _validate_output_path(output_path: str) -> str:
     path = pathlib.Path(output_path)
     if not path.is_absolute():
         path = get_default_output_path() / path
@@ -72,32 +69,28 @@ def validate_output_path(output_path: str) -> str:
 
     return str(path)
 
-def validate_rate(rate: int) -> int:
-    """Assert that the provided download rate is valid."""
+def _validate_rate(rate: int) -> int:
     rate = int(rate)
     if rate < MINIMUM_RATE:
         raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
 
     return rate
 
-def validate_quality(quality: int) -> int:
-    """Assert that the required quality is valid."""
+def _validate_quality(quality: int) -> int:
     quality = int(quality)
     if quality < MINIMUM_QUALITY:
         raise TooSmallValueError(quality, MINIMUM_QUALITY, "p", indent="")
 
     return quality
 
-def validate_timeout(timeout: int) -> int:
-    """Assert that the provided timeout is valid."""
+def _validate_timeout(timeout: int) -> int:
     timeout = int(timeout)
     if timeout < MINIMUM_TIMEOUT:
         raise TooSmallValueError(timeout, MINIMUM_TIMEOUT, "second(-s)")
 
     return timeout
 
-def validate_user_profile(user_profile: str) -> str:
-    """Assert that the provided user profile is available."""
+def _validate_user_profile(user_profile: str) -> str:
     if not pathlib.Path(user_profile).is_dir():
         raise PathNotFoundError(user_profile)
 
@@ -111,8 +104,7 @@ def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
 
     return (parsed_url.netloc, None)
 
-def main() -> None:
-    """Entry point for the video downloader."""
+def _parse_args() -> argparse.Namespace:
     parser = ArgumentParserCustom(
         prog=PROGRAM_NAME,
         formatter_class=argparse.RawTextHelpFormatter,
@@ -121,7 +113,7 @@ def main() -> None:
     parser.add_argument(
         "url",
         help="Video URL.",
-        type=validate_url)
+        type=_validate_url)
 
     parser.add_argument(
         "-h", "--help",
@@ -139,7 +131,7 @@ def main() -> None:
             "path under the directory the program was run from."
         ),
         default=get_default_output_path(),
-        type=validate_output_path)
+        type=_validate_output_path)
 
     parser.add_argument(
         "-r", "--rate",
@@ -148,7 +140,7 @@ def main() -> None:
             "Higher rates are advised for longer videos."
         ),
         default=DEFAULT_RATE,
-        type=validate_rate)
+        type=_validate_rate)
 
     parser.add_argument(
         "-q", "--quality",
@@ -160,7 +152,7 @@ def main() -> None:
             "to this parameter value will be used."
         ),
         default=DEFAULT_QUALITY,
-        type=validate_quality)
+        type=_validate_quality)
 
     parser.add_argument(
         "-t", "--timeout",
@@ -169,7 +161,7 @@ def main() -> None:
             "Few tens of seconds is usually enough."
         ),
         default=DEFAULT_TIMEOUT,
-        type=validate_timeout)
+        type=_validate_timeout)
 
     parser.add_argument(
         "-u", "--user-profile",
@@ -178,7 +170,7 @@ def main() -> None:
             "This must be a combination of both '--user-data-dir' "
             "and '--profile-directory' arguments supplied to Chrome."
         ),
-        type=validate_user_profile)
+        type=_validate_user_profile)
 
     parser.add_argument(
         "-e", "--exact",
@@ -204,9 +196,9 @@ def main() -> None:
         action="count",
         default=0)
 
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    verbosity = args.verbose
+def _get_logger(verbosity: int) -> logging.Logger:
     # Use local package logger
     if verbosity <= MAX_PACKAGE_VERBOSITY:
         logger = logging.getLogger("loaders")
@@ -221,6 +213,35 @@ def main() -> None:
     formatter = ExceptionFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     handler.setFormatter(formatter)
     logger.addHandler(handler)
+    return logger
+
+def _get_chrome_options(*,
+        user_profile: str | None,
+        headless: bool) -> webdriver.ChromeOptions:
+    options = webdriver.ChromeOptions()
+    if user_profile:
+        path = pathlib.Path(user_profile)
+        # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
+        options.add_argument(f"--user-data-dir={path.parent}")
+        options.add_argument(f"--profile-directory={path.name}")
+
+    # Hide browser GUI
+    if headless:
+        options.add_argument("--headless=new")
+
+    options.add_argument("--mute-audio")  # Mute the browser
+    # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+    # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+    # options.add_argument('--no-sandbox')  # Bypass OS security model
+    # options.add_argument('--disable-web-security')  # Disable web security
+    # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
+    # options.add_argument('--disable-webrtc')  # Disable WebRTC
+    return options
+
+def main() -> None:
+    """Entry point for the video downloader."""
+    args = _parse_args()
+    logger = _get_logger(args.verbose)
 
     logger.debug("Args: %s", vars(args))
 
@@ -232,25 +253,9 @@ def main() -> None:
         logger.info("Exiting...")
         return
 
-    options = webdriver.ChromeOptions()
-    if args.user_profile:
-        path = pathlib.Path(args.user_profile)
-        # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
-        options.add_argument(f"--user-data-dir={path.parent}")
-        options.add_argument(f"--profile-directory={path.name}")
-
-    # Hide browser GUI
-    if args.headless:
-        options.add_argument("--headless=new")
-
-    options.add_argument("--mute-audio")  # Mute the browser
-    # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-    # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-    # options.add_argument('--no-sandbox')  # Bypass OS security model
-    # options.add_argument('--disable-web-security')  # Disable web security
-    # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
-    # options.add_argument('--disable-webrtc')  # Disable WebRTC
-
+    options = _get_chrome_options(
+        user_profile=args.user_profile,
+        headless=args.headless)
     try:
         logger.info("Setting up driver...")
         with webdriver.Chrome(options=options) as driver:
