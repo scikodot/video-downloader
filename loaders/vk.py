@@ -3,6 +3,7 @@
 import pathlib
 import urllib.parse as urlparser
 from collections.abc import Iterable
+from typing import Literal
 
 import requests
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
@@ -45,9 +46,10 @@ class VkVideoLoader(LoaderBase):
         # TODO: this must be done via response codes, not via HTML
         try:
             body = self.driver.find_element(By.CSS_SELECTOR, "body")
-            elements_num = int(body.get_attribute("childElementCount"))
-            if elements_num == 1:
-                return body.get_attribute("innerText")
+            if elem_count_str := body.get_attribute("childElementCount"):
+                elem_count = int(elem_count_str)
+                if elem_count == 1:
+                    return body.get_attribute("innerText")
         except NoSuchElementException:
             pass
 
@@ -108,10 +110,11 @@ class VkVideoLoader(LoaderBase):
         )
 
         # Filter out the 'Auto' option with value of -1
-        qualities = (int(qi.get_attribute("data-value")) for qi in quality_items)
+        quality_values = (qi.get_attribute("data-value") for qi in quality_items)
+        qualities = (int(qv) for qv in quality_values if qv)
         return { q for q in qualities if q > 0 }
 
-    def _get_urls_by_type(self) -> dict[int, list[str]]:
+    def _get_urls_by_type(self) -> dict[int, list[str]] | Literal[False]:
         urls, count = {}, 0
         network_logs = self.driver.execute_script(
             "return window.performance.getEntriesByType('resource');")
@@ -186,7 +189,7 @@ class VkVideoLoader(LoaderBase):
     def get_urls(
             self,
             session: requests.Session,
-            directory: pathlib.Path) -> dict[str, Iterable[str] | str]:
+            directory: pathlib.Path) -> dict[str, dict[str, Iterable[str] | str]]:
         urls = (
             WebDriverWait(self.driver, self.timeout)
             .until(lambda _: self._get_urls_by_type())

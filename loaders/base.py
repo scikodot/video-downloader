@@ -14,8 +14,8 @@ import moviepy
 import moviepy.tools
 import requests
 from moviepy import AudioFileClip, VideoFileClip
-from selenium import webdriver
 from selenium.common import TimeoutException
+from selenium.webdriver.remote.webdriver import WebDriver
 
 from exceptions import (
     AccessRestrictedError,
@@ -59,48 +59,33 @@ DEFAULT_EXTENSION = ".mp4"
 class LoaderBase(metaclass=ABCMeta):
     """Base class for video loader classes."""
 
-    def __init__(self, **kwargs: Any) -> None:
+    def __init__(self, driver: WebDriver, **kwargs: Any) -> None:
         """Create a new instance of the loader class."""
-        options = webdriver.ChromeOptions()
-        if "user_profile" in kwargs:
-            path = pathlib.Path(kwargs["user_profile"])
-            # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
-            options.add_argument(f"--user-data-dir={path.parent}")
-            options.add_argument(f"--profile-directory={path.name}")
+        try:
+            self.output_path = pathlib.Path(kwargs["output_path"])
+            self.rate = kwargs["rate"]
+            self.quality = kwargs["quality"]
+            self.timeout = kwargs["timeout"]
+            self.exact = kwargs["exact"]
+            self.overwrite = kwargs["overwrite"]
+            self.driver = driver
+            self.logger = logging.getLogger(self.get_logger_name())
 
-         # Hide browser GUI
-        if kwargs["headless"]:
-            options.add_argument("--headless=new")
+            self._ensure_no_file_or_can_overwrite()
+            self._ensure_output_directory_exists()
 
-        options.add_argument("--mute-audio")  # Mute the browser
-        # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-        # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-        # options.add_argument('--no-sandbox')  # Bypass OS security model
-        # options.add_argument('--disable-web-security')  # Disable web security
-        # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
-        # options.add_argument('--disable-webrtc')  # Disable WebRTC
+            # Increase resource timing buffer size.
+            # The default of 250 is not always enough.
+            source = f"performance.setResourceTimingBufferSize({PERF_BUFFER_SIZE})"
+            self.driver.execute_cdp_cmd(
+                "Page.addScriptToEvaluateOnNewDocument", {"source": source})
 
-        self.driver = webdriver.Chrome(options=options)
-        self.output_path = pathlib.Path(kwargs["output_path"])
-        self.rate = kwargs["rate"]
-        self.quality = kwargs["quality"]
-        self.timeout = kwargs["timeout"]
-        self.exact = kwargs["exact"]
-        self.overwrite = kwargs["overwrite"]
-        self.logger = logging.getLogger(self.get_logger_name())
-
-        self._ensure_no_file_or_can_overwrite()
-        self._ensure_output_directory_exists()
-
-        # Increase resource timing buffer size.
-        # The default of 250 is not always enough.
-        self.driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {"source": f"performance.setResourceTimingBufferSize({PERF_BUFFER_SIZE})"})
-
-        # Clear browser cache.
-        # Cached URLs are not listed in performance entries.
-        self.driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+            # Clear browser cache.
+            # Cached URLs are not listed in performance entries.
+            self.driver.execute_cdp_cmd("Network.clearBrowserCache", {})
+        except Exception:
+            self.logger.error("Loader initialization failed.")  # noqa: TRY400
+            raise
 
     def _get_quality_with_units(self, quality: int) -> str:
         return f"{quality}p"
@@ -172,42 +157,51 @@ class LoaderBase(metaclass=ABCMeta):
         if access_restricted_msg:
             raise AccessRestrictedError(access_restricted_msg)
 
-    def _get_filename_with_timestamp(self, prefix: str) -> str:
+    def _get_title_with_timestamp(self, prefix: str) -> str:
         timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
         return f"{prefix}_{timestamp}"
 
+    def _format_title(self, title: str) -> str:
+        invalid_chars = set()
+        def process_char(ch: str) -> str:
+            if ch.isalnum():
+                return ch
+            if ch != "_":
+                invalid_chars.add(ch)
+            return ""
+
+         # Split by sequences of whitespaces.
+         # This also strips the title the same way on both ends.
+        parts = title.split()
+
+        # Remove invalid characters from the title.
+        title_valid = "_".join(
+            "".join(process_char(ch) for ch in part)
+            for part in parts
+        )
+
+        if invalid_chars:
+            self.logger.warning(
+                "Title '%s' contains invalid characters: %s. "
+                "Title '%s' will be used instead.",
+                title, invalid_chars, title_valid)
+
+        return title_valid
+
     def _ensure_filename_present_and_valid(self) -> None:
+        title = None
         if not self.output_path.suffix:
-            # Get the video title
+            # Get the video title.
             try:
-                title = self.get_title().strip()
-
-                # Remove invalid characters from the title
-                invalid_chars = set()
-                def process_char(ch: str) -> str:
-                    if ch.isalnum():
-                        return ch
-                    if ch != "_":
-                        invalid_chars.add(ch)
-                    return ""
-
-                parts = title.split()  # Split by sequences of whitespaces
-                title_valid = "_".join(
-                    "".join(process_char(ch) for ch in part)
-                    for part in parts
-                )
-
-                if invalid_chars:
-                    self.logger.warning(
-                        "Title '%s' contains invalid characters: %s. "
-                        "Title '%s' will be used instead.",
-                        title, invalid_chars, title_valid)
-
-                title = title_valid
-
-            # Use a timestamp-based one if none found
+                title = self.get_title()
+                if title:
+                    title = self._format_title(title)
             except TimeoutException:
-                title = self._get_filename_with_timestamp(DEFAULT_VIDEO_PREFIX)
+                pass
+
+            # Use a timestamp-based one if none found.
+            if not title:
+                title = self._get_title_with_timestamp(DEFAULT_VIDEO_PREFIX)
                 self.logger.exception(
                     "Could not find video title. Using '%s' instead.", title)
 
@@ -286,7 +280,7 @@ class LoaderBase(metaclass=ABCMeta):
     def get_urls(
         self,
         session: requests.Session,
-        directory: pathlib.Path) -> dict[int, Iterable[str] | str]:
+        directory: pathlib.Path) -> dict[str, dict[str, Iterable[str] | str]]:
         """Get a list of direct URLs for audio/video content.
 
         This method is expected to return at least 2*``q_num`` URLs,

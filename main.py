@@ -7,6 +7,7 @@ import urllib.parse as urlparser
 from typing import Any
 
 import validators
+from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 
 from exceptions import (
@@ -65,11 +66,11 @@ def validate_output_path(output_path: str) -> str:
     """Assert that the provided output path is valid."""
     path = pathlib.Path(output_path)
     if not path.is_absolute():
-        output_path = get_default_output_path() / output_path
+        path = get_default_output_path() / path
     elif path.drive and not pathlib.Path(path.drive).exists():
         raise PathNotFoundError(path.drive)
 
-    return output_path
+    return str(path)
 
 def validate_rate(rate: int) -> int:
     """Assert that the provided download rate is valid."""
@@ -102,7 +103,7 @@ def validate_user_profile(user_profile: str) -> str:
 
     return user_profile
 
-def get_loader_class(url: str) -> tuple[str, LoaderBase | None]:
+def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
     """Get the corresponding loader class for the specified URL."""
     parsed_url = urlparser.urlparse(url)
     if parsed_url.netloc.endswith("vkvideo.ru"):
@@ -177,7 +178,6 @@ def main() -> None:
             "This must be a combination of both '--user-data-dir' "
             "and '--profile-directory' arguments supplied to Chrome."
         ),
-        default=argparse.SUPPRESS,
         type=validate_user_profile)
 
     parser.add_argument(
@@ -232,21 +232,43 @@ def main() -> None:
         logger.info("Exiting...")
         return
 
+    options = webdriver.ChromeOptions()
+    if args.user_profile:
+        path = pathlib.Path(args.user_profile)
+        # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
+        options.add_argument(f"--user-data-dir={path.parent}")
+        options.add_argument(f"--profile-directory={path.name}")
+
+    # Hide browser GUI
+    if args.headless:
+        options.add_argument("--headless=new")
+
+    options.add_argument("--mute-audio")  # Mute the browser
+    # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
+    # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
+    # options.add_argument('--no-sandbox')  # Bypass OS security model
+    # options.add_argument('--disable-web-security')  # Disable web security
+    # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
+    # options.add_argument('--disable-webrtc')  # Disable WebRTC
+
     try:
-        loader = loader_class(**vars(args))
-        logger.info("Navigating to %s...", args.url)
-        loader.get(args.url)
-    except FileExistsNoOverwriteError:
-        loader.logger.exception(
-            "Cannot save the video to the already existing file. "
-            "Use '--overwrite' argument to be able to overwrite the existing file.")
-    finally:
-        logger.info("Closing driver...")
-        try:
-            loader.driver.close()
-            loader.driver.quit()
-        except WebDriverException:
-            logger.exception("Could not terminate the driver gracefully.")
+        logger.info("Setting up driver...")
+        with webdriver.Chrome(options=options) as driver:
+            loader = None
+            try:
+                loader = loader_class(driver=driver, **vars(args))
+                logger.info("Navigating to %s...", args.url)
+                loader.get(args.url)
+            # TODO: also log all uncaught exceptions, via sys.excepthook or similar
+            except FileExistsNoOverwriteError:
+                logger.exception(
+                    "Cannot save the video to the already existing file. "
+                    "Use '--overwrite' argument to be able to overwrite "
+                    "the existing file.")
+
+            logger.info("Closing driver...")
+    except WebDriverException:
+        logger.exception("Could not terminate the driver gracefully.")
 
     logger.info("Exiting...")
     return
