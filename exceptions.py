@@ -34,6 +34,7 @@ class ExceptionFormatter(logging.Formatter):
             record.exc_text = None
         return s
 
+
 @dataclass
 class ParameterizedError(Exception):
     """Common base class for parameterized exceptions.

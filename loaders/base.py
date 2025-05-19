@@ -56,6 +56,7 @@ DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
 DEFAULT_EXTENSION = ".mp4"
 
+
 class LoaderBase(metaclass=ABCMeta):
     """Base class for video loader classes."""
 
@@ -78,7 +79,9 @@ class LoaderBase(metaclass=ABCMeta):
             # The default of 250 is not always enough.
             source = f"performance.setResourceTimingBufferSize({PERF_BUFFER_SIZE})"
             self.driver.execute_cdp_cmd(
-                "Page.addScriptToEvaluateOnNewDocument", {"source": source})
+                "Page.addScriptToEvaluateOnNewDocument",
+                {"source": source},
+            )
 
             # Clear browser cache.
             # Cached URLs are not listed in performance entries.
@@ -99,7 +102,8 @@ class LoaderBase(metaclass=ABCMeta):
             session.cookies.set(
                 cookie["name"],
                 cookie["value"],
-                domain=cookie["domain"])
+                domain=cookie["domain"],
+            )
 
     def _download_file(self, session: requests.Session, url: str) -> requests.Response:
         response = session.get(url)
@@ -114,10 +118,12 @@ class LoaderBase(metaclass=ABCMeta):
             for url in info["urls"]:
                 response = self._download_file(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
-                    raise DownloadRequestError({
-                        "url": url,
-                        "code": response.status_code,
-                    })
+                    raise DownloadRequestError(
+                        {
+                            "url": url,
+                            "code": response.status_code,
+                        },
+                    )
 
                 # Get the packet size.
                 headers = response.headers
@@ -132,8 +138,8 @@ class LoaderBase(metaclass=ABCMeta):
                 # calculate it from the actual content.
                 else:
                     content_length = sum(
-                        len(chunk) for chunk
-                        in response.iter_content(chunk_size=128))
+                        len(chunk) for chunk in response.iter_content(chunk_size=128)
+                    )
 
                 # Set the obtained content length for the generator
                 self._content_length = content_length
@@ -163,6 +169,7 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _format_title(self, title: str) -> str:
         invalid_chars = set()
+
         def process_char(ch: str) -> str:
             if ch.isalnum():
                 return ch
@@ -170,21 +177,23 @@ class LoaderBase(metaclass=ABCMeta):
                 invalid_chars.add(ch)
             return ""
 
-         # Split by sequences of whitespaces.
-         # This also strips the title the same way on both ends.
+        # Split by sequences of whitespaces.
+        # This also strips the title the same way on both ends.
         parts = title.split()
 
         # Remove invalid characters from the title.
         title_valid = "_".join(
-            "".join(process_char(ch) for ch in part)
-            for part in parts
+            "".join(process_char(ch) for ch in part) for part in parts
         )
 
         if invalid_chars:
             self.logger.warning(
                 "Title '%s' contains invalid characters: %s. "
                 "Title '%s' will be used instead.",
-                title, invalid_chars, title_valid)
+                title,
+                invalid_chars,
+                title_valid,
+            )
 
         return title_valid
 
@@ -203,15 +212,19 @@ class LoaderBase(metaclass=ABCMeta):
             if not title:
                 title = self._get_title_with_timestamp(DEFAULT_VIDEO_PREFIX)
                 self.logger.exception(
-                    "Could not find video title. Using '%s' instead.", title)
+                    "Could not find video title. Using '%s' instead.",
+                    title,
+                )
 
             self.output_path /= title
 
     def _ensure_extension_present_and_valid(self) -> None:
         suffix = self.output_path.suffix
-        if (not suffix
+        if (
+            not suffix
             or not (info := moviepy.tools.extensions_dict.get(suffix[1:]))
-            or info["type"] != "video"):
+            or info["type"] != "video"
+        ):
             self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)
 
     def _ensure_no_file_or_can_overwrite(self) -> None:
@@ -243,7 +256,9 @@ class LoaderBase(metaclass=ABCMeta):
             self.logger.info(
                 "Could not find quality value %sp. "
                 "Using the nearest lower quality: %sp.",
-                self.quality, target_quality)
+                self.quality,
+                target_quality,
+            )
 
         return target_quality
 
@@ -280,7 +295,8 @@ class LoaderBase(metaclass=ABCMeta):
     def get_urls(
         self,
         session: requests.Session,
-        directory: pathlib.Path) -> dict[str, dict[str, Iterable[str] | str]]:
+        directory: pathlib.Path,
+    ) -> dict[str, dict[str, Iterable[str] | str]]:
         """Get a list of direct URLs for audio/video content.
 
         This method is expected to return at least 2*``q_num`` URLs,
@@ -305,17 +321,20 @@ class LoaderBase(metaclass=ABCMeta):
             self.disable_autoplay()
         except TimeoutException:
             self.logger.exception(
-                "Could not find an autoplay button to click, operation timed out.")
+                "Could not find an autoplay button to click, operation timed out.",
+            )
 
         try:
             self.target_quality = self._get_target_quality()
         except QualityNotFoundError:
             self.logger.exception(
-                "Could not find exact quality value as required by --exact flag.")
+                "Could not find exact quality value as required by --exact flag.",
+            )
             return
         except TimeoutException:
             self.logger.exception(
-                "Could not obtain the available qualities, operation timed out.")
+                "Could not obtain the available qualities, operation timed out.",
+            )
             return
 
         try:
@@ -348,7 +367,8 @@ class LoaderBase(metaclass=ABCMeta):
                     video.with_audio(audio).write_videofile(self.output_path)
         except TimeoutException:
             self.logger.exception(
-                "Could not obtain the required URLs, operation timed out.")
+                "Could not obtain the required URLs, operation timed out.",
+            )
         except InvalidMimeTypeError:
             self.logger.exception("Could not recognize MIME type of the content.")
         except QualityContentNotFoundError:

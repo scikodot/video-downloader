@@ -28,7 +28,6 @@ VERBOSITY_LEVELS = {
     0: "WARNING",
     1: "INFO",
     2: "DEBUG",
-
     # Root level logging, i. e. all used packages
     3: "INFO",
     4: "DEBUG",
@@ -38,6 +37,7 @@ DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_RATE, MINIMUM_RATE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
+
 
 class ArgumentParserCustom(argparse.ArgumentParser):
     """Custom argument parser that adds extra formatting for help messages."""
@@ -49,16 +49,19 @@ class ArgumentParserCustom(argparse.ArgumentParser):
 
         return super().add_argument(*args, **kwargs)
 
+
 def _validate_url(url: str) -> str:
     if not validators.url(url):
         raise UrlValidationError(url)
 
     return url
 
+
 def get_default_output_path() -> pathlib.Path:
     """Get the default output path for downloaded videos."""
     directory = pathlib.Path(__file__).parent.resolve()
     return directory / DEFAULT_OUTPUT_SUBPATH
+
 
 def _validate_output_path(output_path: str) -> str:
     path = pathlib.Path(output_path)
@@ -69,12 +72,14 @@ def _validate_output_path(output_path: str) -> str:
 
     return str(path)
 
+
 def _validate_rate(rate: int) -> int:
     rate = int(rate)
     if rate < MINIMUM_RATE:
         raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
 
     return rate
+
 
 def _validate_quality(quality: int) -> int:
     quality = int(quality)
@@ -83,6 +88,7 @@ def _validate_quality(quality: int) -> int:
 
     return quality
 
+
 def _validate_timeout(timeout: int) -> int:
     timeout = int(timeout)
     if timeout < MINIMUM_TIMEOUT:
@@ -90,11 +96,13 @@ def _validate_timeout(timeout: int) -> int:
 
     return timeout
 
+
 def _validate_user_profile(user_profile: str) -> str:
     if not pathlib.Path(user_profile).is_dir():
         raise PathNotFoundError(user_profile)
 
     return user_profile
+
 
 def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
     """Get the corresponding loader class for the specified URL."""
@@ -104,25 +112,27 @@ def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
 
     return (parsed_url.netloc, None)
 
+
 def _parse_args() -> argparse.Namespace:
     parser = ArgumentParserCustom(
         prog=PROGRAM_NAME,
         formatter_class=argparse.RawTextHelpFormatter,
-        add_help=False)
+        add_help=False,
+    )
+
+    parser.add_argument("url", help="Video URL.", type=_validate_url)
 
     parser.add_argument(
-        "url",
-        help="Video URL.",
-        type=_validate_url)
-
-    parser.add_argument(
-        "-h", "--help",
+        "-h",
+        "--help",
         help="Show this help message and exit.",
         action="help",
-        default=argparse.SUPPRESS)
+        default=argparse.SUPPRESS,
+    )
 
     parser.add_argument(
-        "-o", "--output-path",
+        "-o",
+        "--output-path",
         help=(
             "Where to put the downloaded video. May be absolute or relative.\n"
             "If relative, the video will be saved at the specified path "
@@ -131,19 +141,23 @@ def _parse_args() -> argparse.Namespace:
             "path under the directory the program was run from."
         ),
         default=get_default_output_path(),
-        type=_validate_output_path)
+        type=_validate_output_path,
+    )
 
     parser.add_argument(
-        "-r", "--rate",
+        "-r",
+        "--rate",
         help=(
             "How many kilobytes (KBs) to download on every request.\n"
             "Higher rates are advised for longer videos."
         ),
         default=DEFAULT_RATE,
-        type=_validate_rate)
+        type=_validate_rate,
+    )
 
     parser.add_argument(
-        "-q", "--quality",
+        "-q",
+        "--quality",
         help=(
             f"Which quality the downloaded video must have (e. g. {DEFAULT_QUALITY}).\n"
             "This parameter determines the exact quality "
@@ -152,51 +166,65 @@ def _parse_args() -> argparse.Namespace:
             "to this parameter value will be used."
         ),
         default=DEFAULT_QUALITY,
-        type=_validate_quality)
+        type=_validate_quality,
+    )
 
     parser.add_argument(
-        "-t", "--timeout",
+        "-t",
+        "--timeout",
         help=(
             "How many seconds to wait for every operation on the page to complete.\n"
             "Few tens of seconds is usually enough."
         ),
         default=DEFAULT_TIMEOUT,
-        type=_validate_timeout)
+        type=_validate_timeout,
+    )
 
     parser.add_argument(
-        "-u", "--user-profile",
+        "-u",
+        "--user-profile",
         help=(
             "Path to the user profile to launch Chrome with.\n"
             "This must be a combination of both '--user-data-dir' "
             "and '--profile-directory' arguments supplied to Chrome."
         ),
-        type=_validate_user_profile)
+        type=_validate_user_profile,
+    )
 
     parser.add_argument(
-        "-e", "--exact",
+        "-e",
+        "--exact",
         help=(
             "Do not load the video in any quality "
             "if the specified quality is not found."
         ),
-        action="store_true")
+        action="store_true",
+    )
 
     parser.add_argument(
-        "-w", "--overwrite",
+        "-w",
+        "--overwrite",
         help="Overwrite the video file with the same name if it exists.",
-        action="store_true")
+        action="store_true",
+    )
 
     parser.add_argument(
-        "-l", "--headless",
+        "-l",
+        "--headless",
         help="Run browser in headless mode, i. e. without GUI.",
-        action="store_true")
+        action="store_true",
+    )
 
     parser.add_argument(
-        "-v", "--verbose",
+        "-v",
+        "--verbose",
         help="Show detailed information about performed actions.",
         action="count",
-        default=0)
+        default=0,
+    )
 
     return parser.parse_args()
+
 
 def _get_logger(verbosity: int) -> logging.Logger:
     # Use local package logger
@@ -215,9 +243,12 @@ def _get_logger(verbosity: int) -> logging.Logger:
     logger.addHandler(handler)
     return logger
 
-def _get_chrome_options(*,
-        user_profile: str | None,
-        headless: bool) -> webdriver.ChromeOptions:
+
+def _get_chrome_options(
+    *,
+    user_profile: str | None,
+    headless: bool,
+) -> webdriver.ChromeOptions:
     options = webdriver.ChromeOptions()
     if user_profile:
         path = pathlib.Path(user_profile)
@@ -238,6 +269,7 @@ def _get_chrome_options(*,
     # options.add_argument('--disable-webrtc')  # Disable WebRTC
     return options
 
+
 def main() -> None:
     """Entry point for the video downloader."""
     args = _parse_args()
@@ -249,13 +281,16 @@ def main() -> None:
     netloc, loader_class = get_loader_class(args.url)
     if not loader_class:
         logger.error(
-            "Could not find loader for '%s'. Perhaps, it is not supported yet.", netloc)
+            "Could not find loader for '%s'. Perhaps, it is not supported yet.",
+            netloc,
+        )
         logger.info("Exiting...")
         return
 
     options = _get_chrome_options(
         user_profile=args.user_profile,
-        headless=args.headless)
+        headless=args.headless,
+    )
     try:
         logger.info("Setting up driver...")
         with webdriver.Chrome(options=options) as driver:
@@ -269,7 +304,8 @@ def main() -> None:
                 logger.exception(
                     "Cannot save the video to the already existing file. "
                     "Use '--overwrite' argument to be able to overwrite "
-                    "the existing file.")
+                    "the existing file.",
+                )
 
             logger.info("Closing driver...")
     except WebDriverException:
@@ -277,6 +313,7 @@ def main() -> None:
 
     logger.info("Exiting...")
     return
+
 
 if __name__ == "__main__":
     main()

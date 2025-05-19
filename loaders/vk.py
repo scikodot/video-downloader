@@ -37,7 +37,8 @@ class VkVideoLoader(LoaderBase):
         try:
             placeholder = self.driver.find_element(
                 By.CSS_SELECTOR,
-                "div[data-testid='placeholder_description']")
+                "div[data-testid='placeholder_description']",
+            )
             return placeholder.get_attribute("innerText")
         except NoSuchElementException:
             pass
@@ -55,22 +56,20 @@ class VkVideoLoader(LoaderBase):
 
     @override
     def disable_autoplay(self) -> None:
-        autoplay = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(ec.element_to_be_clickable((
-                By.CSS_SELECTOR,
-                "div[class~='videoplayer_btn_autoplay']")))
+        autoplay = WebDriverWait(self.driver, self.timeout).until(
+            ec.element_to_be_clickable(
+                (By.CSS_SELECTOR, "div[class~='videoplayer_btn_autoplay']"),
+            ),
         )
         if autoplay.get_attribute("data-value-checked") == "true":
             autoplay.click()
 
     @override
     def get_title(self) -> str | None:
-        title = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(ec.visibility_of_element_located((
-                By.CSS_SELECTOR,
-                "div[data-testid='video_modal_title']")))
+        title = WebDriverWait(self.driver, self.timeout).until(
+            ec.visibility_of_element_located(
+                (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
+            ),
         )
         return title.get_attribute("innerText")
 
@@ -80,9 +79,11 @@ class VkVideoLoader(LoaderBase):
         self.logger.info("Waiting for Settings button to appear...")
         (
             WebDriverWait(self.driver, self.timeout)
-            .until(ec.element_to_be_clickable((
-                By.CSS_SELECTOR,
-                "div[class~='videoplayer_btn_settings']")))
+            .until(
+                ec.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"),
+                ),
+            )
             .click()
         )
 
@@ -90,9 +91,14 @@ class VkVideoLoader(LoaderBase):
         self.logger.info("Waiting for Quality menu option to appear...")
         (
             WebDriverWait(self.driver, self.timeout)
-            .until(ec.element_to_be_clickable((
-                By.CSS_SELECTOR,
-                "div[class~='videoplayer_settings_menu_list_item_quality']")))
+            .until(
+                ec.element_to_be_clickable(
+                    (
+                        By.CSS_SELECTOR,
+                        "div[class~='videoplayer_settings_menu_list_item_quality']",
+                    ),
+                ),
+            )
             .click()
         )
 
@@ -100,24 +106,30 @@ class VkVideoLoader(LoaderBase):
         self.logger.info("Waiting for quality options to appear...")
         quality_items = (
             WebDriverWait(self.driver, self.timeout)
-            .until(ec.element_to_be_clickable((
-                By.CSS_SELECTOR,
-                "div[class~='videoplayer_settings_menu_sublist_item']")))
+            .until(
+                ec.element_to_be_clickable(
+                    (
+                        By.CSS_SELECTOR,
+                        "div[class~='videoplayer_settings_menu_sublist_item']",
+                    ),
+                ),
+            )
             .find_element(By.XPATH, "./..")
-            .find_elements(
-                By.CSS_SELECTOR,
-                "div[data-setting='quality']")
+            .find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
         )
 
         # Filter out the 'Auto' option with value of -1
         quality_values = (qi.get_attribute("data-value") for qi in quality_items)
         qualities = (int(qv) for qv in quality_values if qv)
-        return { q for q in qualities if q > 0 }
+        return {q for q in qualities if q > 0}
 
-    def _get_urls_by_type(self) -> dict[int, list[str]] | Literal[False]:
+    def _get_urls_from_network_logs(
+        self,
+    ) -> dict[int, list[str]] | Literal[False]:
         urls, count = {}, 0
         network_logs = self.driver.execute_script(
-            "return window.performance.getEntriesByType('resource');")
+            "return window.performance.getEntriesByType('resource');",
+        )
         for network_log in network_logs:
             initiator_type = network_log.get("initiatorType", "")
             if initiator_type == "fetch":
@@ -135,7 +147,9 @@ class VkVideoLoader(LoaderBase):
         self.logger.debug(
             "Number of URLs obtained by type: %s. "
             "Total number of performance entries: %s.",
-            urls_num, len(network_logs))
+            urls_num,
+            len(network_logs),
+        )
 
         if count >= 2 * len(self.qualities):
             return urls
@@ -149,13 +163,15 @@ class VkVideoLoader(LoaderBase):
         try:
             video_ui = self.driver.find_element(
                 By.CSS_SELECTOR,
-                "div[class='videoplayer_ui']")
+                "div[class='videoplayer_ui']",
+            )
             video_state = video_ui.get_attribute("data-state")
             if video_state == "ended":
                 try:
                     replay_button = video_ui.find_element(
                         By.CSS_SELECTOR,
-                        "div[class~='videoplayer_btn_play']")
+                        "div[class~='videoplayer_btn_play']",
+                    )
                     replay_button.click()
                 except NoSuchElementException:
                     self.logger.exception("Could not locate replay button to click.")
@@ -187,17 +203,17 @@ class VkVideoLoader(LoaderBase):
     # TODO: replace dict with namedtuple or dataclass
     @override
     def get_urls(
-            self,
-            session: requests.Session,
-            directory: pathlib.Path) -> dict[str, dict[str, Iterable[str] | str]]:
-        urls = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(lambda _: self._get_urls_by_type())
+        self,
+        session: requests.Session,
+        directory: pathlib.Path,
+    ) -> dict[str, dict[str, Iterable[str] | str]]:
+        urls = WebDriverWait(self.driver, self.timeout).until(
+            lambda _: self._get_urls_from_network_logs(),
         )
         for urls_type, urls_list in urls.items():
             self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
 
-        pairs = { k: {} for k in urls }
+        pairs = {k: {} for k in urls}
         target_urls_type = None
         for urls_type, urls_list in urls.items():
             for url in urls_list:
@@ -241,6 +257,7 @@ class VkVideoLoader(LoaderBase):
 
         if not target_urls_type:
             raise QualityContentNotFoundError(
-                self._get_quality_with_units(self.target_quality))
+                self._get_quality_with_units(self.target_quality),
+            )
 
         return pairs[target_urls_type]
