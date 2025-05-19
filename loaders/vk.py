@@ -3,9 +3,10 @@
 import pathlib
 import urllib.parse as urlparser
 from collections.abc import Iterable
-from typing import Literal
+from typing import Any, Literal
 
 import requests
+from lxml import etree
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
@@ -14,6 +15,7 @@ from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
 
 from exceptions import (
+    AmbiguousUrlsError,
     GeneratorExitError,
     InvalidMimeTypeError,
     QualityContentNotFoundError,
@@ -22,6 +24,16 @@ from exceptions import (
 from .base import LoaderBase
 
 VALID_MIME_TYPE_PREFIXES = ("audio", "video")
+
+# Quality name->value map, as per VK's .mpd file format.
+QUALITIES = {
+    "mobile": 144,
+    "lowest": 240,
+    "low": 360,
+    "medium": 480,
+    "high": 720,
+    "fullhd": 1080,
+}
 
 
 class VkVideoLoader(LoaderBase):
@@ -123,41 +135,7 @@ class VkVideoLoader(LoaderBase):
         qualities = (int(qv) for qv in quality_values if qv)
         return {q for q in qualities if q > 0}
 
-    def _get_urls_from_network_logs(
-        self,
-    ) -> dict[int, list[str]] | Literal[False]:
-        urls, count = {}, 0
-        network_logs = self.driver.execute_script(
-            "return window.performance.getEntriesByType('resource');",
-        )
-        for network_log in network_logs:
-            initiator_type = network_log.get("initiatorType", "")
-            if initiator_type == "fetch":
-                name = network_log.get("name", "")
-                query = urlparser.parse_qs(urlparser.urlparse(name).query)
-                if "bytes" in query and query["bytes"][0].startswith("0"):
-                    query_type = query["type"][0]
-                    if query_type not in urls:
-                        urls[query_type] = []
-
-                    urls[query_type].append(name)
-                    count += 1
-
-        urls_num = {k: len(v) for k, v in urls.items()}
-        self.logger.debug(
-            "Number of URLs obtained by type: %s. "
-            "Total number of performance entries: %s.",
-            urls_num,
-            len(network_logs),
-        )
-
-        if count >= 2 * len(self.qualities):
-            return urls
-
-        # If there was not enough URLs, try to replay the video.
-        # If the video is too short, not all URLs may get requested on the first play.
-        # The replay enables sending the absent URLs requests once again.
-        #
+    def _replay(self) -> None:
         # Here, we first check if the video has ended,
         # and then locate the replay button to click on it.
         try:
@@ -178,9 +156,58 @@ class VkVideoLoader(LoaderBase):
         except NoSuchElementException:
             self.logger.exception("Could not locate video UI element.")
 
+    def _get_urls_from_network_logs(
+        self,
+    ) -> dict[int, list[str]] | str | Literal[False]:
+        mpd, urls, count = None, {}, 0
+        network_logs = self.driver.execute_script(
+            "return window.performance.getEntriesByType('resource');",
+        )
+        for network_log in network_logs:
+            initiator_type = network_log.get("initiatorType", "")
+            if initiator_type == "fetch":
+                name = network_log.get("name", "")
+                query = urlparser.parse_qs(urlparser.urlparse(name).query)
+
+                # Media Presentation Description (MPD) file
+                # which contains URLs for all available qualities
+                if name.endswith(".mpd"):
+                    mpd = name
+                    break
+
+                # URLs with byte ranges
+                if "bytes" in query and query["bytes"][0].startswith("0"):
+                    query_type = query["type"][0]
+                    if query_type not in urls:
+                        urls[query_type] = []
+
+                    urls[query_type].append(name)
+                    count += 1
+
+        if mpd and urls:
+            raise AmbiguousUrlsError(mpd, urls)
+
+        if mpd:
+            return mpd
+
+        urls_num = {k: len(v) for k, v in urls.items()}
+        self.logger.debug(
+            "Number of URLs obtained by type: %s. "
+            "Total number of performance entries: %s.",
+            urls_num,
+            len(network_logs),
+        )
+
+        if count >= 2 * len(self.qualities):
+            return urls
+
+        # If there was not enough URLs, try to replay the video.
+        # If the video is too short, not all URLs may get requested on the first play.
+        # The replay enables sending the absent URLs requests once again.
+        self._replay()
         return False
 
-    def _get_file_parts_urls(self, url: str) -> Iterable[str]:
+    def _get_url_gen_by_bytes(self, url: str) -> Iterable[str]:
         bytes_pos = url.find("bytes") + 6
         bytes_start, bytes_num = 0, self.rate * 1024
         while True:  # OK as this is a generator
@@ -200,22 +227,121 @@ class VkVideoLoader(LoaderBase):
 
             bytes_start += bytes_num
 
-    # TODO: replace dict with namedtuple or dataclass
-    @override
-    def get_urls(
+    def _get_url_gen_by_numbers(
         self,
+        base_url: str,
+        init_url: str,
+        media_url: str,
+        nums: Iterable[int],
+    ) -> Iterable[str]:
+        # First, yield the init segment
+        yield base_url + init_url
+
+        # Find the '$Number$' placeholder and replace it with actual numbers
+        j = media_url.rfind("$")
+        i = media_url[:j].rfind("$")
+        for num in nums:
+            yield base_url + media_url[:i] + str(num) + media_url[j + 1 :]
+
+    def _get_urls_from_mpd_by_type(
+        self,
+        mpd_url: str,
+        mpd: Any,
+        directory: pathlib.Path,
+        *,
+        video: bool,
+    ) -> dict[str, Iterable[str] | str]:
+        # TODO: consider getting rid of namespace {*} notion
+        adapt = mpd.find(
+            "{*}Period/{*}AdaptationSet[@contentType='%s']"
+            % ("video" if video else "audio"),
+        )
+        reps = adapt.findall("{*}Representation")
+        _repr = None
+        if video:
+            for r in reps:
+                width = int(r.get("width"))
+                height = int(r.get("height"))
+                if min(width, height) == self.target_quality:
+                    _repr = r
+        else:
+            q_prev = None
+            for r in reps:
+                q_str = r.get("quality")
+                q = QUALITIES[q_str]
+                if (q_prev or 0) < self.target_quality <= q:
+                    _repr = r
+                q_prev = q
+
+        # TODO: add distinct exceptions for audio and video errors
+        if not _repr:
+            raise QualityContentNotFoundError(
+                self._get_quality_with_units(self.target_quality),
+            )
+
+        _type = _repr.get("mimeType")
+        file = _type.replace("/", ".")
+
+        segtemp = _repr.find("{*}SegmentTemplate")
+        start_num = int(segtemp.get("startNumber"))
+        init_url = segtemp.get("initialization")
+        media_url = segtemp.get("media")
+
+        # Get the number of .m4s segments via SegmentTimeline
+        count = 0
+        segtime = segtemp.find("{*}SegmentTimeline")
+        for s in segtime.findall("{*}S"):
+            count += 1
+            if r := s.get("r"):
+                count += int(r)
+
+        base_url = mpd_url[: mpd_url.rfind("/") + 1]
+        return {
+            "urls": self._get_url_gen_by_numbers(
+                base_url,
+                init_url,
+                media_url,
+                nums=range(start_num, count + 1),
+            ),
+            "path": directory / file,
+        }
+
+    def _get_urls_from_mpd(
+        self,
+        mpd_url: str,
         session: requests.Session,
         directory: pathlib.Path,
     ) -> dict[str, dict[str, Iterable[str] | str]]:
-        urls = WebDriverWait(self.driver, self.timeout).until(
-            lambda _: self._get_urls_from_network_logs(),
-        )
-        for urls_type, urls_list in urls.items():
+        self.logger.debug("MPD URL: %s", mpd_url)
+        response = self._download_file(session, mpd_url)
+        mpd = etree.fromstring(response.text, parser=etree.get_default_parser())
+        return {
+            "video": self._get_urls_from_mpd_by_type(
+                mpd_url,
+                mpd,
+                directory,
+                video=True,
+            ),
+            "audio": self._get_urls_from_mpd_by_type(
+                mpd_url,
+                mpd,
+                directory,
+                video=False,
+            ),
+        }
+
+    def _get_urls_from_dict(
+        self,
+        urls_dict: dict[int, list[str]],
+        session: requests.Session,
+        directory: pathlib.Path,
+    ) -> dict[str, dict[str, Iterable[str] | str]]:
+        for urls_type, urls_list in urls_dict.items():
             self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
 
-        pairs = {k: {} for k in urls}
+        pairs = {k: {} for k in urls_dict}
         target_urls_type = None
-        for urls_type, urls_list in urls.items():
+        for urls_type, urls_list in urls_dict.items():
             for url in urls_list:
                 # TODO: consider getting full file size from Content-Range header
                 response = self._download_file(session, url)
@@ -233,12 +359,12 @@ class VkVideoLoader(LoaderBase):
                 filename = content_type.replace("/", ".")
                 if content_type.startswith("audio"):
                     pairs[urls_type]["audio"] = {
-                        "urls": self._get_file_parts_urls(url),
+                        "urls": self._get_url_gen_by_bytes(url),
                         "path": directory / filename,
                     }
                 else:
                     pairs[urls_type]["video"] = {
-                        "urls": self._get_file_parts_urls(url),
+                        "urls": self._get_url_gen_by_bytes(url),
                         "path": directory / filename,
                     }
 
@@ -261,3 +387,20 @@ class VkVideoLoader(LoaderBase):
             )
 
         return pairs[target_urls_type]
+
+    # TODO: replace dict with namedtuple or dataclass
+    @override
+    def get_urls(
+        self,
+        session: requests.Session,
+        directory: pathlib.Path,
+    ) -> dict[str, dict[str, Iterable[str] | str]]:
+        res = WebDriverWait(self.driver, self.timeout).until(
+            lambda _: self._get_urls_from_network_logs(),
+        )
+        if isinstance(res, str):
+            return self._get_urls_from_mpd(res, session, directory)
+        if isinstance(res, dict):
+            return self._get_urls_from_dict(res, session, directory)
+
+        raise TypeError(type(res).__name__)

@@ -115,3 +115,7 @@ class InvalidMimeTypeError(Exception):
 
 class DownloadRequestError(Exception):
     """Thrown when the HTTP download request failed."""
+
+
+class AmbiguousUrlsError(Exception):
+    """Thrown when there are too many distinct URLs for download."""

@@ -107,8 +107,7 @@ class LoaderBase(metaclass=ABCMeta):
 
     def _download_file(self, session: requests.Session, url: str) -> requests.Response:
         response = session.get(url)
-        self.logger.debug("Response: %s", response)
-        self.logger.debug("Headers: %s", response.headers)
+        self.logger.debug("Response: %s; Headers: %s", response, response.headers)
 
         return response
 
