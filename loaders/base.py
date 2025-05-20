@@ -367,14 +367,27 @@ class LoaderBase(metaclass=ABCMeta):
                 self._download_file_by_info(session, video_info)
 
                 # Merge the downloaded files into one (audio + video)
-                # TODO: if the file could not be saved to output path (for any reason:
-                # missing directory, existing file without --overwrite, etc.),
-                # either keep it in this temp dir or move to some safe dir
                 with (
                     AudioFileClip(audio_info["path"]) as audio,
                     VideoFileClip(video_info["path"]) as video,
                 ):
-                    video.with_audio(audio).write_videofile(self.output_path)
+                    video_with_audio = video.with_audio(audio)
+                    output_path = self.output_path
+                    try:
+                        self._ensure_output_directory_exists()
+                        self._ensure_no_file_or_can_overwrite()
+                    except FileExistsNoOverwriteError:
+                        filename = self._get_title_with_timestamp(output_path.stem)
+                        output_path = self.output_path.with_stem(filename)
+                        self.logger.exception(
+                            "Cannot save the downloaded video "
+                            "to the already existing file, "
+                            "as '--overwrite' argument was not used. "
+                            "Filename '%s' will be used instead.",
+                            filename,
+                        )
+
+                    video_with_audio.write_videofile(output_path)
         except TimeoutException:
             self.logger.exception(
                 "Could not obtain the required URLs, operation timed out.",
