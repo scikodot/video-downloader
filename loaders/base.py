@@ -51,6 +51,7 @@ DEFAULT_CHROME_SWITCHES = [
 ]
 PERF_BUFFER_SIZE = 1000
 RESPONSE_OK_CODES = range(200, 300)
+RESPONSE_CHUNK_SIZE = 128
 
 DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
@@ -108,12 +109,14 @@ class LoaderBase(metaclass=ABCMeta):
     def _download_file(self, session: requests.Session, url: str) -> requests.Response:
         response = session.get(url)
         self.logger.debug("Response: %s; Headers: %s", response, response.headers)
-
         return response
 
     # TODO: replace info type with namedtuple or dataclass
+    # TODO: consider adding a small timeout to requests;
+    # loading many files too fast may cause suspicions on the host's side
     def _download_file_by_info(self, session: requests.Session, info: dict) -> None:
-        with pathlib.Path(info["path"]).open("ab") as file:
+        bytes_count = 0
+        with info["path"].open("ab") as file:
             for url in info["urls"]:
                 response = self._download_file(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
@@ -137,7 +140,10 @@ class LoaderBase(metaclass=ABCMeta):
                 # calculate it from the actual content.
                 else:
                     content_length = sum(
-                        len(chunk) for chunk in response.iter_content(chunk_size=128)
+                        len(chunk)
+                        for chunk in response.iter_content(
+                            chunk_size=RESPONSE_CHUNK_SIZE,
+                        )
                     )
 
                 # Set the obtained content length for the generator
@@ -149,13 +155,18 @@ class LoaderBase(metaclass=ABCMeta):
                 if content_length <= 0:
                     break
 
-                for chunk in response.iter_content(chunk_size=128):
-                    file.write(chunk)
+                for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
+                    bytes_count += file.write(chunk)
+
+        self.logger.debug("%s bytes loaded into '%s'", bytes_count, info["path"])
 
     def _write_file(self, response: requests.Response, filepath: pathlib.Path) -> None:
+        bytes_count = 0
         with pathlib.Path(filepath).open("wb") as f:
-            for chunk in response.iter_content(chunk_size=128):
-                f.write(chunk)
+            for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
+                bytes_count += f.write(chunk)
+
+        self.logger.debug("%s bytes loaded into '%s'", bytes_count, filepath)
 
     def _ensure_video_accessible(self) -> None:
         access_restricted_msg = self.check_restrictions()

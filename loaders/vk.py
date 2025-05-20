@@ -218,13 +218,14 @@ class VkVideoLoader(LoaderBase):
             yield url
 
             content_length = getattr(self, "_content_length", None)
-            if not content_length:
+            if content_length is None:
                 raise GeneratorExitError(details="No content length was provided.")
 
             # Last loaded packet is smaller than required => file is exhausted
             if self._content_length < bytes_num:
                 break
 
+            self._content_length = None
             bytes_start += bytes_num
 
     def _get_url_gen_by_numbers(
@@ -235,13 +236,18 @@ class VkVideoLoader(LoaderBase):
         nums: Iterable[int],
     ) -> Iterable[str]:
         # First, yield the init segment
-        yield base_url + init_url
+        url = base_url + init_url
+        self.logger.debug("Init segment: %s", url[url.rfind("/") + 1 :])
+        yield url
 
-        # Find the '$Number$' placeholder and replace it with actual numbers
+        # Find the '$Number$' placeholder and replace it
+        # with actual number for each media segment.
         j = media_url.rfind("$")
         i = media_url[:j].rfind("$")
         for num in nums:
-            yield base_url + media_url[:i] + str(num) + media_url[j + 1 :]
+            url = base_url + media_url[:i] + str(num) + media_url[j + 1 :]
+            self.logger.debug("Segment #%s: %s", num, url[url.rfind("/") + 1 :])
+            yield url
 
     def _get_urls_from_mpd_by_type(
         self,
@@ -251,11 +257,12 @@ class VkVideoLoader(LoaderBase):
         *,
         video: bool,
     ) -> dict[str, Iterable[str] | str]:
+        av_type = "video" if video else "audio"
         # TODO: consider getting rid of namespace {*} notion
         adapt = mpd.find(
-            "{*}Period/{*}AdaptationSet[@contentType='%s']"
-            % ("video" if video else "audio"),
+            f"{{*}}Period/{{*}}AdaptationSet[@contentType='{av_type}']",
         )
+        # TODO: sort by quality; Representation entries order is not guaranteed
         reps = adapt.findall("{*}Representation")
         _repr = None
         if video:
@@ -265,6 +272,7 @@ class VkVideoLoader(LoaderBase):
                 if min(width, height) == self.target_quality:
                     _repr = r
         else:
+            # Find the first audio track that has quality >= video quality
             q_prev = None
             for r in reps:
                 q_str = r.get("quality")
@@ -273,8 +281,12 @@ class VkVideoLoader(LoaderBase):
                     _repr = r
                 q_prev = q
 
+            # If no match was found, pick the highest audio quality
+            if _repr is None:
+                _repr = reps[-1]
+
         # TODO: add distinct exceptions for audio and video errors
-        if not _repr:
+        if _repr is None:
             raise QualityContentNotFoundError(
                 self._get_quality_with_units(self.target_quality),
             )
@@ -294,6 +306,7 @@ class VkVideoLoader(LoaderBase):
             count += 1
             if r := s.get("r"):
                 count += int(r)
+        self.logger.debug("%s segments count: %s", av_type.capitalize(), count)
 
         base_url = mpd_url[: mpd_url.rfind("/") + 1]
         return {
@@ -314,7 +327,7 @@ class VkVideoLoader(LoaderBase):
     ) -> dict[str, dict[str, Iterable[str] | str]]:
         self.logger.debug("MPD URL: %s", mpd_url)
         response = self._download_file(session, mpd_url)
-        mpd = etree.fromstring(response.text, parser=etree.get_default_parser())
+        mpd = etree.fromstring(response.content, parser=etree.get_default_parser())
         return {
             "video": self._get_urls_from_mpd_by_type(
                 mpd_url,
@@ -381,7 +394,7 @@ class VkVideoLoader(LoaderBase):
                     if quality == self.target_quality:
                         target_urls_type = urls_type
 
-        if not target_urls_type:
+        if target_urls_type is None:
             raise QualityContentNotFoundError(
                 self._get_quality_with_units(self.target_quality),
             )
