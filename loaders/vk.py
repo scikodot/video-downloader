@@ -2,7 +2,7 @@
 
 import pathlib
 import urllib.parse as urlparser
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import Any, Literal
 
 import requests
@@ -21,7 +21,7 @@ from exceptions import (
     QualityContentNotFoundError,
 )
 
-from .base import LoaderBase
+from .base import LoaderBase, MediaSpec, ResourceSpec
 
 VALID_MIME_TYPE_PREFIXES = ("audio", "video")
 
@@ -207,7 +207,7 @@ class VkVideoLoader(LoaderBase):
         self._replay()
         return False
 
-    def _get_url_gen_by_bytes(self, url: str) -> Iterable[str]:
+    def _get_urls_by_bytes(self, url: str) -> Iterable[str]:
         bytes_pos = url.find("bytes") + 6
         bytes_start, bytes_num = 0, self.rate * 1024
         while True:  # OK as this is a generator
@@ -228,7 +228,7 @@ class VkVideoLoader(LoaderBase):
             self._content_length = None
             bytes_start += bytes_num
 
-    def _get_url_gen_by_numbers(
+    def _get_urls_by_numbers(
         self,
         base_url: str,
         init_url: str,
@@ -249,14 +249,14 @@ class VkVideoLoader(LoaderBase):
             self.logger.debug("Segment #%s: %s", num, url[url.rfind("/") + 1 :])
             yield url
 
-    def _get_urls_from_mpd_by_type(
+    def _get_resource_from_mpd(
         self,
         mpd_url: str,
         mpd: Any,
         directory: pathlib.Path,
         *,
         video: bool,
-    ) -> dict[str, Iterable[str] | str]:
+    ) -> ResourceSpec:
         av_type = "video" if video else "audio"
         # TODO: consider getting rid of namespace {*} notion
         adapt = mpd.find(
@@ -309,81 +309,71 @@ class VkVideoLoader(LoaderBase):
         self.logger.debug("%s segments count: %s", av_type.capitalize(), count)
 
         base_url = mpd_url[: mpd_url.rfind("/") + 1]
-        return {
-            "urls": self._get_url_gen_by_numbers(
+        return ResourceSpec(
+            source=self._get_urls_by_numbers(
                 base_url,
                 init_url,
                 media_url,
                 nums=range(start_num, count + 1),
             ),
-            "path": directory / file,
-        }
+            target=directory / file,
+        )
 
-    def _get_urls_from_mpd(
+    def _get_media_from_mpd(
         self,
         mpd_url: str,
         session: requests.Session,
         directory: pathlib.Path,
-    ) -> dict[str, dict[str, Iterable[str] | str]]:
+    ) -> MediaSpec:
         self.logger.debug("MPD URL: %s", mpd_url)
-        response = self._download_file(session, mpd_url)
+        response = self._download_resource(session, mpd_url)
         mpd = etree.fromstring(response.content, parser=etree.get_default_parser())
-        return {
-            "video": self._get_urls_from_mpd_by_type(
-                mpd_url,
-                mpd,
-                directory,
-                video=True,
-            ),
-            "audio": self._get_urls_from_mpd_by_type(
-                mpd_url,
-                mpd,
-                directory,
-                video=False,
-            ),
-        }
+        return MediaSpec(
+            video=self._get_resource_from_mpd(mpd_url, mpd, directory, video=True),
+            audio=self._get_resource_from_mpd(mpd_url, mpd, directory, video=False),
+        )
 
-    def _get_urls_from_dict(
+    def _get_media_from_types_map(
         self,
-        urls_dict: dict[int, list[str]],
+        types_map: Mapping[int, Iterable[str]],
         session: requests.Session,
         directory: pathlib.Path,
-    ) -> dict[str, dict[str, Iterable[str] | str]]:
-        for urls_type, urls_list in urls_dict.items():
-            self.logger.debug("URLs, type %s: %s", urls_type, urls_list)
+    ) -> MediaSpec:
+        for urls_type, urls in types_map.items():
+            self.logger.debug("URLs, type %s: %s", urls_type, urls)
 
-        pairs = {k: {} for k in urls_dict}
-        target_urls_type = None
-        for urls_type, urls_list in urls_dict.items():
-            for url in urls_list:
+        medias = {k: {} for k in types_map}
+        media = None
+        for urls_type, urls in types_map.items():
+            for url in urls:
                 # TODO: consider getting full file size from Content-Range header
-                response = self._download_file(session, url)
+                response = self._download_resource(session, url)
 
                 content_type = response.headers.get("Content-Type", "")
                 if not content_type.startswith(VALID_MIME_TYPE_PREFIXES):
                     raise InvalidMimeTypeError(content_type)
 
-                filename = content_type.replace("/", f".type{urls_type}.")
-                filepath = directory / filename
-                self.logger.debug("Filepath: %s", str(filepath))
+                file = content_type.replace("/", f".type{urls_type}.")
+                path = directory / file
+                self.logger.debug("Filepath: %s", path)
 
-                self._write_file(response, filepath)
+                self._write_file(response, path)
 
-                filename = content_type.replace("/", ".")
+                file = content_type.replace("/", ".")
                 if content_type.startswith("audio"):
-                    pairs[urls_type]["audio"] = {
-                        "urls": self._get_url_gen_by_bytes(url),
-                        "path": directory / filename,
-                    }
+                    medias[urls_type]["audio"] = ResourceSpec(
+                        source=self._get_urls_by_bytes(url),
+                        target=directory / file,
+                    )
                 else:
-                    pairs[urls_type]["video"] = {
-                        "urls": self._get_url_gen_by_bytes(url),
-                        "path": directory / filename,
-                    }
+                    medias[urls_type]["video"] = ResourceSpec(
+                        source=self._get_urls_by_bytes(url),
+                        target=directory / file,
+                    )
 
                     # Don't check duration, as it may not be recognized
                     # for incomplete files.
-                    infos = ffmpeg_parse_infos(str(filepath), check_duration=False)
+                    infos = ffmpeg_parse_infos(str(path), check_duration=False)
                     self.logger.debug("Infos: %s", infos)
 
                     # Here, we take the minimum of width and height to also handle
@@ -392,28 +382,30 @@ class VkVideoLoader(LoaderBase):
                     # rather than height only.
                     quality = min(infos["video_size"])
                     if quality == self.target_quality:
-                        target_urls_type = urls_type
+                        media = medias[urls_type]
 
-        if target_urls_type is None:
+            if media:
+                break
+
+        if not media:
             raise QualityContentNotFoundError(
                 self._get_quality_with_units(self.target_quality),
             )
 
-        return pairs[target_urls_type]
+        return MediaSpec(audio=media["audio"], video=media["video"])
 
-    # TODO: replace dict with namedtuple or dataclass
     @override
-    def get_urls(
+    def get_media(
         self,
         session: requests.Session,
         directory: pathlib.Path,
-    ) -> dict[str, dict[str, Iterable[str] | str]]:
+    ) -> MediaSpec:
         res = WebDriverWait(self.driver, self.timeout).until(
             lambda _: self._get_urls_from_network_logs(),
         )
         if isinstance(res, str):
-            return self._get_urls_from_mpd(res, session, directory)
+            return self._get_media_from_mpd(res, session, directory)
         if isinstance(res, dict):
-            return self._get_urls_from_dict(res, session, directory)
+            return self._get_media_from_types_map(res, session, directory)
 
         raise TypeError(type(res).__name__)

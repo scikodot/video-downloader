@@ -7,6 +7,7 @@ import re
 import tempfile
 from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime as dt
 from typing import Any
 
@@ -58,6 +59,22 @@ DEFAULT_AUDIO_PREFIX = "audio"
 DEFAULT_EXTENSION = ".mp4"
 
 
+@dataclass
+class ResourceSpec:
+    """Specification of a remote resource that needs to be downloaded."""
+
+    source: Iterable[str]
+    target: pathlib.Path
+
+
+@dataclass
+class MediaSpec:
+    """Specification of a media resource consisting of audio and video components."""
+
+    audio: ResourceSpec
+    video: ResourceSpec
+
+
 class LoaderBase(metaclass=ABCMeta):
     """Base class for video loader classes."""
 
@@ -106,19 +123,26 @@ class LoaderBase(metaclass=ABCMeta):
                 domain=cookie["domain"],
             )
 
-    def _download_file(self, session: requests.Session, url: str) -> requests.Response:
+    def _download_resource(
+        self,
+        session: requests.Session,
+        url: str,
+    ) -> requests.Response:
         response = session.get(url)
         self.logger.debug("Response: %s; Headers: %s", response, response.headers)
         return response
 
-    # TODO: replace info type with namedtuple or dataclass
     # TODO: consider adding a small timeout to requests;
     # loading many files too fast may cause suspicions on the host's side
-    def _download_file_by_info(self, session: requests.Session, info: dict) -> None:
+    def _download_resource_by_spec(
+        self,
+        session: requests.Session,
+        spec: ResourceSpec,
+    ) -> None:
         bytes_count = 0
-        with info["path"].open("ab") as file:
-            for url in info["urls"]:
-                response = self._download_file(session, url)
+        with spec.target.open("ab") as file:
+            for url in spec.source:
+                response = self._download_resource(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
                     raise DownloadRequestError(
                         {
@@ -158,15 +182,15 @@ class LoaderBase(metaclass=ABCMeta):
                 for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
                     bytes_count += file.write(chunk)
 
-        self.logger.debug("%s bytes loaded into '%s'", bytes_count, info["path"])
+        self.logger.debug("%s bytes loaded into '%s'", bytes_count, spec.target)
 
-    def _write_file(self, response: requests.Response, filepath: pathlib.Path) -> None:
+    def _write_file(self, response: requests.Response, path: pathlib.Path) -> None:
         bytes_count = 0
-        with pathlib.Path(filepath).open("wb") as f:
+        with pathlib.Path(path).open("wb") as f:
             for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
                 bytes_count += f.write(chunk)
 
-        self.logger.debug("%s bytes loaded into '%s'", bytes_count, filepath)
+        self.logger.debug("%s bytes loaded into '%s'", bytes_count, path)
 
     def _ensure_video_accessible(self) -> None:
         access_restricted_msg = self.check_restrictions()
@@ -302,17 +326,53 @@ class LoaderBase(metaclass=ABCMeta):
         ...
 
     @abstractmethod
-    def get_urls(
+    def get_media(
         self,
         session: requests.Session,
         directory: pathlib.Path,
-    ) -> dict[str, dict[str, Iterable[str] | str]]:
-        """Get a list of direct URLs for audio/video content.
-
-        This method is expected to return at least 2*``q_num`` URLs,
-        where ``q_num`` is the number of available qualities.
-        """
+    ) -> MediaSpec:
+        """Get a ``MediaSpec`` object containing audio and video content."""
         ...
+
+    def _execute(self) -> None:
+        with (
+            requests.Session() as session,
+            tempfile.TemporaryDirectory() as directory,
+        ):
+            self.logger.debug("Temporary directory: %s", directory)
+
+            # Copy user agent and cookies to the new session.
+            # This is required so that this session is allowed to access
+            # the previously obtained URLs.
+            self._copy_cookies(session)
+
+            media = self.get_media(session, pathlib.Path(directory))
+
+            self._download_resource_by_spec(session, media.audio)
+            self._download_resource_by_spec(session, media.video)
+
+            # Merge the downloaded files into one (audio + video)
+            with (
+                AudioFileClip(media.audio.target) as audio,
+                VideoFileClip(media.video.target) as video,
+            ):
+                video_with_audio = video.with_audio(audio)
+                output_path = self.output_path
+                try:
+                    self._ensure_output_directory_exists()
+                    self._ensure_no_file_or_can_overwrite()
+                except FileExistsNoOverwriteError:
+                    filename = self._get_title_with_timestamp(output_path.stem)
+                    output_path = self.output_path.with_stem(filename)
+                    self.logger.exception(
+                        "Cannot save the downloaded video "
+                        "to the already existing file, "
+                        "as '--overwrite' argument was not used. "
+                        "Filename '%s' will be used instead.",
+                        filename,
+                    )
+
+                video_with_audio.write_videofile(output_path)
 
     def get(self, url: str) -> None:
         """Navigate to ``url``, locate the video and load it."""
@@ -348,46 +408,7 @@ class LoaderBase(metaclass=ABCMeta):
             return
 
         try:
-            with (
-                requests.Session() as session,
-                tempfile.TemporaryDirectory() as directory,
-            ):
-                self.logger.debug("Temporary directory: %s", directory)
-
-                # Copy user agent and cookies to the new session.
-                # This is required so that this session is allowed to access
-                # the previously obtained URLs.
-                self._copy_cookies(session)
-
-                urls = self.get_urls(session, pathlib.Path(directory))
-
-                audio_info = urls["audio"]
-                video_info = urls["video"]
-                self._download_file_by_info(session, audio_info)
-                self._download_file_by_info(session, video_info)
-
-                # Merge the downloaded files into one (audio + video)
-                with (
-                    AudioFileClip(audio_info["path"]) as audio,
-                    VideoFileClip(video_info["path"]) as video,
-                ):
-                    video_with_audio = video.with_audio(audio)
-                    output_path = self.output_path
-                    try:
-                        self._ensure_output_directory_exists()
-                        self._ensure_no_file_or_can_overwrite()
-                    except FileExistsNoOverwriteError:
-                        filename = self._get_title_with_timestamp(output_path.stem)
-                        output_path = self.output_path.with_stem(filename)
-                        self.logger.exception(
-                            "Cannot save the downloaded video "
-                            "to the already existing file, "
-                            "as '--overwrite' argument was not used. "
-                            "Filename '%s' will be used instead.",
-                            filename,
-                        )
-
-                    video_with_audio.write_videofile(output_path)
+            self._execute()
         except TimeoutException:
             self.logger.exception(
                 "Could not obtain the required URLs, operation timed out.",
