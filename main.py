@@ -309,7 +309,7 @@ def main() -> None:
 
             logger.info("Closing driver...")
     except WebDriverException:
-        logger.exception("Could not terminate the driver gracefully.")
+        logger.exception("Driver error has occured.")
 
     logger.info("Exiting...")
     return

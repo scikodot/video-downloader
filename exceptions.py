@@ -20,6 +20,13 @@ class ExceptionFormatter(logging.Formatter):
         traceback.print_exception(ei[0], ei[1], ei[2], limit=0, file=sio)
         s = sio.getvalue()
         sio.close()
+
+        # Also strip the exception message of the traceback if it is present.
+        if (pos := s.find("Traceback")) > 0:
+            s = s[:pos]
+        if (pos := s.find("Stacktrace")) > 0:
+            s = s[:pos]
+
         if s[-1] == "\n":
             s = s[:-1]
         return f" | {s}"

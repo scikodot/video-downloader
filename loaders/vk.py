@@ -208,12 +208,15 @@ class VkVideoLoader(LoaderBase):
         return False
 
     def _get_urls_by_bytes(self, url: str) -> Iterable[str]:
-        bytes_pos = url.find("bytes") + 6
+        url_parsed = urlparser.urlparse(url)
+        url_query = urlparser.parse_qs(url_parsed.query)
         bytes_start, bytes_num = 0, self.rate * 1024
-        while True:  # OK as this is a generator
-            # TODO: consider constructing URL from the previously parsed one
+        while True:
             bytes_end = bytes_start + bytes_num - 1
-            url = url[:bytes_pos] + f"{bytes_start}-{bytes_end}"
+            url_query["bytes"][0] = f"{bytes_start}-{bytes_end}"
+            url = url_parsed._replace(
+                query=urlparser.urlencode(url_query, doseq=True),
+            ).geturl()
             self.logger.debug("URL: %s", url)
             yield url
 
