@@ -140,3 +140,7 @@ class DownloadRequestError(Exception):
 
 class AmbiguousUrlsError(Exception):
     """Thrown when there are too many distinct URLs for download."""
+
+
+class InvalidMpdError(Exception):
+    """Thrown when the provided Media Presentation Document (MPD) is malformed."""

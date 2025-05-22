@@ -3,7 +3,7 @@
 import pathlib
 import urllib.parse as urlparser
 from collections.abc import Iterable, Mapping
-from typing import Any, Literal
+from typing import Literal
 
 import requests
 from lxml import etree
@@ -18,10 +18,11 @@ from exceptions import (
     AmbiguousUrlsError,
     GeneratorExitError,
     InvalidMimeTypeError,
+    InvalidMpdError,
     QualityContentNotFoundError,
 )
 
-from .base import LoaderBase, MediaSpec, ResourceSpec
+from .base import CustomElementTree, LoaderBase, MediaSpec, ResourceSpec
 
 VALID_MIME_TYPE_PREFIXES = ("audio", "video")
 
@@ -255,7 +256,7 @@ class VkVideoLoader(LoaderBase):
     def _get_resource_from_mpd(
         self,
         mpd_url: str,
-        mpd: Any,
+        mpd: CustomElementTree,
         directory: pathlib.Path,
         *,
         video: bool,
@@ -265,19 +266,25 @@ class VkVideoLoader(LoaderBase):
         adapt = mpd.find(
             f"{{*}}Period/{{*}}AdaptationSet[@contentType='{av_type}']",
         )
-        # TODO: sort by quality; Representation entries order is not guaranteed
-        reps = adapt.findall("{*}Representation")
+
+        def _get_quality(r: etree._Element) -> int:
+            width = r.get("width")
+            height = r.get("height")
+            if not width or not height:
+                raise InvalidMpdError
+            return min(int(width), int(height))
+
+        reprs = adapt.findall("{*}Representation")
         _repr = None
         if video:
-            for r in reps:
-                width = int(r.get("width"))
-                height = int(r.get("height"))
-                if min(width, height) == self.target_quality:
+            for r in reprs:
+                if _get_quality(r) == self.target_quality:
                     _repr = r
+                    break
         else:
             # Find the first audio track that has quality >= video quality
             q_prev = None
-            for r in reps:
+            for r in sorted(reprs, key=_get_quality):
                 q_str = r.get("quality")
                 q = QUALITIES[q_str]
                 if (q_prev or 0) < self.target_quality <= q:
@@ -286,7 +293,7 @@ class VkVideoLoader(LoaderBase):
 
             # If no match was found, pick the highest audio quality
             if _repr is None:
-                _repr = reps[-1]
+                _repr = reprs[-1]
 
         # TODO: add distinct exceptions for audio and video errors
         if _repr is None:
@@ -330,7 +337,9 @@ class VkVideoLoader(LoaderBase):
     ) -> MediaSpec:
         self.logger.debug("MPD URL: %s", mpd_url)
         response = self._download_resource(session, mpd_url)
-        mpd = etree.fromstring(response.content, parser=etree.get_default_parser())
+        mpd = CustomElementTree(
+            etree.fromstring(response.content, parser=etree.get_default_parser()),
+        )
         return MediaSpec(
             video=self._get_resource_from_mpd(mpd_url, mpd, directory, video=True),
             audio=self._get_resource_from_mpd(mpd_url, mpd, directory, video=False),

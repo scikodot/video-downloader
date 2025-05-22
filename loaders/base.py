@@ -14,9 +14,11 @@ from typing import Any
 import moviepy
 import moviepy.tools
 import requests
+from lxml import etree
 from moviepy import AudioFileClip, VideoFileClip
 from selenium.common import TimeoutException
 from selenium.webdriver.remote.webdriver import WebDriver
+from typing_extensions import override
 
 from exceptions import (
     AccessRestrictedError,
@@ -24,6 +26,7 @@ from exceptions import (
     FileExistsNoOverwriteError,
     GeneratorExitError,
     InvalidMimeTypeError,
+    InvalidMpdError,
     QualityContentNotFoundError,
     QualityNotFoundError,
 )
@@ -57,6 +60,62 @@ RESPONSE_CHUNK_SIZE = 128
 DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
 DEFAULT_EXTENSION = ".mp4"
+
+
+class CustomElement(etree._Element):  # noqa: SLF001
+    """Wrapper class for ``lxml.etree._Element``.
+
+    Raises exceptions instead of returning ``None`` when nothing is found.
+    """
+
+    def __init__(self, elem: etree._Element) -> None:
+        """Create a new ``lxml.etree._Element`` wrapper for ``elem``."""
+        self.elem = elem
+
+    @override
+    def find(self, path, namespaces=None) -> "CustomElement":  # noqa: ANN001
+        res = self.elem.find(path, namespaces)
+        if not res:
+            raise InvalidMpdError
+        return CustomElement(res)
+
+    # Ignore override typing; base method returns
+    # a specific type (list[etree._Element], which is invariant)
+    # instead of a more general one, hence no opportunity for typesafe subtyping.
+    @override
+    def findall(self, path, namespaces=None) -> "list[CustomElement]":  # type: ignore[override] # noqa: ANN001
+        res = self.elem.findall(path, namespaces)
+        if not res:
+            raise InvalidMpdError
+        return [CustomElement(elem) for elem in res]
+
+    # Ignore override typing; base methods are @overload'ed,
+    # @override cannot determine the right version,
+    # and overriding the base implementation (with 'default' param) is unnecessary.
+    @override
+    def get(self, key) -> str:  # type: ignore[override]  # noqa: ANN001
+        res = self.elem.get(key)
+        if not res:
+            raise InvalidMpdError
+        return res
+
+
+class CustomElementTree(etree._ElementTree):  # noqa: SLF001
+    """Wrapper class for ``lxml.etree._ElementTree``.
+
+    Raises exceptions instead of returning ``None`` when nothing is found.
+    """
+
+    def __init__(self, tree: etree._ElementTree) -> None:
+        """Create a new ``lxml.etree._ElementTree`` wrapper for ``tree``."""
+        self.tree = tree
+
+    @override
+    def find(self, path, namespaces=None) -> CustomElement:  # noqa: ANN001
+        res = self.tree.find(path, namespaces)
+        if not res:
+            raise InvalidMpdError
+        return CustomElement(res)
 
 
 @dataclass
@@ -415,6 +474,8 @@ class LoaderBase(metaclass=ABCMeta):
             )
         except InvalidMimeTypeError:
             self.logger.exception("Could not recognize MIME type of the content.")
+        except InvalidMpdError:
+            self.logger.exception("Could not parse the provided MPD file.")
         except QualityContentNotFoundError:
             self.logger.exception("Could not find content with the required quality.")
         except DownloadRequestError:
