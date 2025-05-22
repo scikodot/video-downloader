@@ -3,10 +3,9 @@
 import io
 import logging
 import traceback
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
 
-# TODO: add typing_extensions to reqs
 from typing_extensions import override
 
 
@@ -43,11 +42,11 @@ class ExceptionFormatter(logging.Formatter):
 
 
 @dataclass
-class ParameterizedError(Exception):
+class ParameterizedError(Exception, ABC):
     """Common base class for parameterized exceptions.
 
-    Classes that inherit from this class must declare ``_message`` attribute
-    with the default value containing formatting placeholders (like {0}, {1}, etc.).
+    Classes that inherit from this class must implement ``_message`` property
+    that returns a value containing formatting placeholders (like {0}, {1}, etc.).
     All other attributes' values are then used to format ``_message``
     in their declaration order.
 
@@ -55,10 +54,9 @@ class ParameterizedError(Exception):
     to the number of placeholders in ``_message``.
     """
 
-    # ClassVar's are excluded from @dataclass workflow.
-    # This field will not make its way to __init__, etc.
-    # TODO: consider converting to a property
-    _message: ClassVar[str]
+    @property
+    @abstractmethod
+    def _message(self) -> str: ...
 
     def __post_init__(self) -> None:  # noqa: D105
         args = tuple(v for k, v in vars(self).items() if not k.startswith("_"))
@@ -69,7 +67,11 @@ class ParameterizedError(Exception):
 class UrlValidationError(ParameterizedError):
     """Thrown when the provided URL is invalid."""
 
-    _message: ClassVar[str] = "Invalid URL: {0}"
+    @property
+    @override
+    def _message(self) -> str:
+        return "Invalid URL: {0}"
+
     url: str
 
 
@@ -77,7 +79,11 @@ class UrlValidationError(ParameterizedError):
 class PathNotFoundError(ParameterizedError):
     """Thrown when the path is expected to exist but does not."""
 
-    _message: ClassVar[str] = "Path not found: {0}"
+    @property
+    @override
+    def _message(self) -> str:
+        return "Path not found: {0}"
+
     path: str
 
 
@@ -85,7 +91,11 @@ class PathNotFoundError(ParameterizedError):
 class TooSmallValueError(ParameterizedError):
     """Thrown when the value is smaller than its lower bound."""
 
-    _message: ClassVar[str] = "Value {0} is too small, must be at least {1}{3}{2}."
+    @property
+    @override
+    def _message(self) -> str:
+        return "Value {0} is too small, must be at least {1}{3}{2}."
+
     value: int | float
     lower_bound: int | float
     units: str
@@ -96,7 +106,11 @@ class TooSmallValueError(ParameterizedError):
 class GeneratorExitError(ParameterizedError):
     """Thrown when it is unclear as to when the generator must exit."""
 
-    _message: ClassVar[str] = "Exit condition is undefined. {0}"
+    @property
+    @override
+    def _message(self) -> str:
+        return "Exit condition is undefined. {0}"
+
     details: str = ""
 
 
