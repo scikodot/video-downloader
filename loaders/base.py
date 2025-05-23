@@ -9,7 +9,8 @@ from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime as dt
-from typing import Any
+from enum import StrEnum, auto
+from typing import Any, Self
 
 import moviepy
 import moviepy.tools
@@ -27,7 +28,7 @@ from exceptions import (
     GeneratorExitError,
     InvalidMimeTypeError,
     InvalidMpdError,
-    QualityContentNotFoundError,
+    MediaNotFoundError,
     QualityNotFoundError,
 )
 
@@ -60,6 +61,21 @@ RESPONSE_CHUNK_SIZE = 128
 DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
 DEFAULT_EXTENSION = ".mp4"
+
+
+class MediaType(StrEnum):
+    """Enumeration class of known media types."""
+
+    AUDIO = auto()
+    VIDEO = auto()
+
+    @classmethod
+    def from_mime_type(cls, mime_type: str) -> Self:
+        for media_type in cls:
+            if mime_type.startswith(media_type):
+                return media_type
+
+        raise InvalidMimeTypeError(mime_type)
 
 
 class CustomElement(etree._Element):  # noqa: SLF001
@@ -476,8 +492,8 @@ class LoaderBase(metaclass=ABCMeta):
             self.logger.exception("Could not recognize MIME type of the content.")
         except InvalidMpdError:
             self.logger.exception("Could not parse the provided MPD file.")
-        except QualityContentNotFoundError:
-            self.logger.exception("Could not find content with the required quality.")
+        except MediaNotFoundError:
+            self.logger.exception("Could not find the required media.")
         except DownloadRequestError:
             self.logger.exception("Could not download files due to a request error.")
         except GeneratorExitError:

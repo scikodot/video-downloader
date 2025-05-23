@@ -17,14 +17,18 @@ from typing_extensions import override
 from exceptions import (
     AmbiguousUrlsError,
     GeneratorExitError,
-    InvalidMimeTypeError,
     InvalidMpdError,
-    QualityContentNotFoundError,
+    MediaNotFoundError,
 )
 
-from .base import CustomElementTree, LoaderBase, MediaSpec, ResourceSpec
-
-VALID_MIME_TYPE_PREFIXES = ("audio", "video")
+from .base import (
+    CustomElement,
+    CustomElementTree,
+    LoaderBase,
+    MediaSpec,
+    MediaType,
+    ResourceSpec,
+)
 
 # Quality name->value map, as per VK's .mpd file format.
 QUALITIES = {
@@ -253,58 +257,68 @@ class VkVideoLoader(LoaderBase):
             self.logger.debug("Segment #%s: %s", num, url[url.rfind("/") + 1 :])
             yield url
 
+    def _get_quality_from_representation(self, r: CustomElement) -> int:
+        w = r.get("width")
+        h = r.get("height")
+        if not w or not h:
+            raise InvalidMpdError
+        return min(int(w), int(h))
+
+    def _get_audio_representation(
+        self,
+        rs: list[CustomElement],
+    ) -> CustomElement | None:
+        # Find the first audio track of quality >= video quality
+        rs_sorted = sorted(rs, key=self._get_quality_from_representation)
+        q_prev = None
+        for r in rs_sorted:
+            q_str = r.get("quality")
+            q = QUALITIES[q_str]
+            if (q_prev or 0) < self.target_quality <= q:
+                return r
+            q_prev = q
+
+        # If no match was found, pick the highest audio quality
+        return rs_sorted[-1] if len(rs) > 0 else None
+
+    def _get_video_representation(
+        self,
+        rs: list[CustomElement],
+    ) -> CustomElement | None:
+        for r in rs:
+            if self._get_quality_from_representation(r) == self.target_quality:
+                return r
+        return None
+
     def _get_resource_from_mpd(
         self,
-        mpd_url: str,
         mpd: CustomElementTree,
+        media_type: MediaType,
+        base_url: str,
         directory: pathlib.Path,
-        *,
-        video: bool,
     ) -> ResourceSpec:
-        av_type = "video" if video else "audio"
         # TODO: consider getting rid of namespace {*} notion
         adapt = mpd.find(
-            f"{{*}}Period/{{*}}AdaptationSet[@contentType='{av_type}']",
+            f"{{*}}Period/{{*}}AdaptationSet[@contentType='{media_type}']",
         )
+        reps = adapt.findall("{*}Representation")
+        rep = None
+        match media_type:
+            case MediaType.VIDEO:
+                rep = self._get_video_representation(reps)
+            case MediaType.AUDIO:
+                rep = self._get_audio_representation(reps)
 
-        def _get_quality(r: etree._Element) -> int:
-            width = r.get("width")
-            height = r.get("height")
-            if not width or not height:
-                raise InvalidMpdError
-            return min(int(width), int(height))
-
-        reprs = adapt.findall("{*}Representation")
-        _repr = None
-        if video:
-            for r in reprs:
-                if _get_quality(r) == self.target_quality:
-                    _repr = r
-                    break
-        else:
-            # Find the first audio track that has quality >= video quality
-            q_prev = None
-            for r in sorted(reprs, key=_get_quality):
-                q_str = r.get("quality")
-                q = QUALITIES[q_str]
-                if (q_prev or 0) < self.target_quality <= q:
-                    _repr = r
-                q_prev = q
-
-            # If no match was found, pick the highest audio quality
-            if _repr is None:
-                _repr = reprs[-1]
-
-        # TODO: add distinct exceptions for audio and video errors
-        if _repr is None:
-            raise QualityContentNotFoundError(
-                self._get_quality_with_units(self.target_quality),
+        if not rep:
+            raise MediaNotFoundError(
+                media_type,
+                self.target_quality,
             )
 
-        _type = _repr.get("mimeType")
-        file = _type.replace("/", ".")
+        mime_type = rep.get("mimeType")
+        file = mime_type.replace("/", ".")
 
-        segtemp = _repr.find("{*}SegmentTemplate")
+        segtemp = rep.find("{*}SegmentTemplate")
         start_num = int(segtemp.get("startNumber"))
         init_url = segtemp.get("initialization")
         media_url = segtemp.get("media")
@@ -316,9 +330,8 @@ class VkVideoLoader(LoaderBase):
             count += 1
             if r := s.get("r"):
                 count += int(r)
-        self.logger.debug("%s segments count: %s", av_type.capitalize(), count)
+        self.logger.debug("%s segments count: %s", media_type.capitalize(), count)
 
-        base_url = mpd_url[: mpd_url.rfind("/") + 1]
         return ResourceSpec(
             source=self._get_urls_by_numbers(
                 base_url,
@@ -340,9 +353,20 @@ class VkVideoLoader(LoaderBase):
         mpd = CustomElementTree(
             etree.fromstring(response.content, parser=etree.get_default_parser()),
         )
+        base_url = mpd_url[: mpd_url.rfind("/") + 1]
         return MediaSpec(
-            video=self._get_resource_from_mpd(mpd_url, mpd, directory, video=True),
-            audio=self._get_resource_from_mpd(mpd_url, mpd, directory, video=False),
+            video=self._get_resource_from_mpd(
+                mpd,
+                MediaType.VIDEO,
+                base_url,
+                directory,
+            ),
+            audio=self._get_resource_from_mpd(
+                mpd,
+                MediaType.AUDIO,
+                base_url,
+                directory,
+            ),
         )
 
     def _get_media_from_types_map(
@@ -361,28 +385,21 @@ class VkVideoLoader(LoaderBase):
                 # TODO: consider getting full file size from Content-Range header
                 response = self._download_resource(session, url)
 
-                content_type = response.headers.get("Content-Type", "")
-                if not content_type.startswith(VALID_MIME_TYPE_PREFIXES):
-                    raise InvalidMimeTypeError(content_type)
+                mime_type = response.headers.get("Content-Type", "")
+                media_type = MediaType.from_mime_type(mime_type)
 
-                file = content_type.replace("/", f".type{urls_type}.")
+                file = mime_type.replace("/", f".type{urls_type}.")
                 path = directory / file
                 self.logger.debug("Filepath: %s", path)
 
                 self._write_file(response, path)
 
-                file = content_type.replace("/", ".")
-                if content_type.startswith("audio"):
-                    medias[urls_type]["audio"] = ResourceSpec(
-                        source=self._get_urls_by_bytes(url),
-                        target=directory / file,
-                    )
-                else:
-                    medias[urls_type]["video"] = ResourceSpec(
-                        source=self._get_urls_by_bytes(url),
-                        target=directory / file,
-                    )
-
+                file = mime_type.replace("/", ".")
+                medias[urls_type][media_type] = ResourceSpec(
+                    source=self._get_urls_by_bytes(url),
+                    target=directory / file,
+                )
+                if media_type == MediaType.VIDEO:
                     # Don't check duration, as it may not be recognized
                     # for incomplete files.
                     infos = ffmpeg_parse_infos(str(path), check_duration=False)
@@ -400,8 +417,14 @@ class VkVideoLoader(LoaderBase):
                 break
 
         if not media:
-            raise QualityContentNotFoundError(
-                self._get_quality_with_units(self.target_quality),
+            raise MediaNotFoundError(
+                MediaType.VIDEO,
+                self.target_quality,
+            )
+        if MediaType.AUDIO not in media:
+            raise MediaNotFoundError(
+                MediaType.AUDIO,
+                self.target_quality,
             )
 
         return MediaSpec(audio=media["audio"], video=media["video"])

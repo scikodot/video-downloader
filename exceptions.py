@@ -8,6 +8,8 @@ from dataclasses import dataclass
 
 from typing_extensions import override
 
+from loaders.base import MediaType
+
 
 class ExceptionFormatter(logging.Formatter):
     """Custom formatter for logging exceptions without stacktrace."""
@@ -118,8 +120,17 @@ class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""
 
 
-class QualityContentNotFoundError(Exception):
+@dataclass
+class MediaNotFoundError(ParameterizedError):
     """Thrown when a content of the specified quality could not be found."""
+
+    @property
+    @override
+    def _message(self) -> str:
+        return "No {0} content found for quality {1}p."
+
+    media_type: MediaType
+    quality: int
 
 
 class AccessRestrictedError(Exception):
