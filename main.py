@@ -12,12 +12,12 @@ from selenium.common.exceptions import WebDriverException
 
 from exceptions import (
     ExceptionFormatter,
-    FileExistsNoOverwriteError,
     PathNotFoundError,
     TooSmallValueError,
     UrlValidationError,
 )
 from loaders.base import LoaderBase
+from loaders.exceptions import FileExistsNoOverwriteError
 from loaders.vk import VkVideoLoader
 
 PROGRAM_NAME = "video-downloader"

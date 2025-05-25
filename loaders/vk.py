@@ -14,21 +14,18 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
 
-from exceptions import (
+from loaders.base import (
+    LoaderBase,
+    MediaSpec,
+    ResourceSpec,
+)
+from loaders.exceptions import (
     AmbiguousUrlsError,
     GeneratorExitError,
     InvalidMpdError,
     MediaNotFoundError,
 )
-
-from .base import (
-    CustomElement,
-    CustomElementTree,
-    LoaderBase,
-    MediaSpec,
-    MediaType,
-    ResourceSpec,
-)
+from loaders.utils import CustomElement, CustomElementTree, MediaType
 
 # Quality name->value map, as per VK's .mpd file format.
 QUALITIES = {
@@ -309,7 +306,7 @@ class VkVideoLoader(LoaderBase):
             case MediaType.AUDIO:
                 rep = self._get_audio_representation(reps)
 
-        if not rep:
+        if rep is None:
             raise MediaNotFoundError(
                 media_type,
                 self.target_quality,
