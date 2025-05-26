@@ -22,10 +22,9 @@ from loaders.base import (
 from loaders.exceptions import (
     AmbiguousUrlsError,
     GeneratorExitError,
-    InvalidMpdError,
     MediaNotFoundError,
 )
-from loaders.utils import CustomElement, CustomElementTree, MediaType
+from loaders.utils import CustomElementTree, MediaType, MpdElement
 
 # Quality name->value map, as per VK's .mpd file format.
 QUALITIES = {
@@ -254,34 +253,31 @@ class VkVideoLoader(LoaderBase):
             self.logger.debug("Segment #%s: %s", num, url[url.rfind("/") + 1 :])
             yield url
 
-    def _get_quality_from_representation(self, r: CustomElement) -> int:
-        w = r.get("width")
-        h = r.get("height")
-        if not w or not h:
-            raise InvalidMpdError
-        return min(int(w), int(h))
+    def _get_quality_from_representation(self, r: MpdElement) -> int:
+        q_str = r.get("quality")
+        return QUALITIES[q_str]
 
     def _get_audio_representation(
         self,
-        rs: list[CustomElement],
-    ) -> CustomElement | None:
+        rs: list[MpdElement],
+    ) -> MpdElement | None:
+        rs_map = {self._get_quality_from_representation(r): r for r in rs}
+        rs_sorted = sorted(rs_map.items())
+
         # Find the first audio track of quality >= video quality
-        rs_sorted = sorted(rs, key=self._get_quality_from_representation)
         q_prev = None
-        for r in rs_sorted:
-            q_str = r.get("quality")
-            q = QUALITIES[q_str]
+        for q, r in rs_sorted:
             if (q_prev or 0) < self.target_quality <= q:
                 return r
             q_prev = q
 
         # If no match was found, pick the highest audio quality
-        return rs_sorted[-1] if len(rs) > 0 else None
+        return rs_sorted[-1][1] if rs else None
 
     def _get_video_representation(
         self,
-        rs: list[CustomElement],
-    ) -> CustomElement | None:
+        rs: list[MpdElement],
+    ) -> MpdElement | None:
         for r in rs:
             if self._get_quality_from_representation(r) == self.target_quality:
                 return r
@@ -294,11 +290,17 @@ class VkVideoLoader(LoaderBase):
         base_url: str,
         directory: pathlib.Path,
     ) -> ResourceSpec:
+        self.logger.debug("Getting %s resource...", media_type)
+
         # TODO: consider getting rid of namespace {*} notion
         adapt = mpd.find(
             f"{{*}}Period/{{*}}AdaptationSet[@contentType='{media_type}']",
         )
+        self.logger.debug("AdaptationSet: %s", adapt.attrib)
+
         reps = adapt.findall("{*}Representation")
+        self.logger.debug("Representations count: %s", len(reps))
+
         rep = None
         match media_type:
             case MediaType.VIDEO:
@@ -311,11 +313,14 @@ class VkVideoLoader(LoaderBase):
                 media_type,
                 self.target_quality,
             )
+        self.logger.debug("Representation: %s", rep.attrib)
 
         mime_type = rep.get("mimeType")
         file = mime_type.replace("/", ".")
 
         segtemp = rep.find("{*}SegmentTemplate")
+        self.logger.debug("SegmentTemplate: %s", segtemp.attrib)
+
         start_num = int(segtemp.get("startNumber"))
         init_url = segtemp.get("initialization")
         media_url = segtemp.get("media")
@@ -327,7 +332,7 @@ class VkVideoLoader(LoaderBase):
             count += 1
             if r := s.get("r"):
                 count += int(r)
-        self.logger.debug("%s segments count: %s", media_type.capitalize(), count)
+        self.logger.debug("Segments count: %s", count)
 
         return ResourceSpec(
             source=self._get_urls_by_numbers(

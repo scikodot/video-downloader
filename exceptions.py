@@ -64,6 +64,22 @@ class ParameterizedError(Exception, ABC):
 
 
 @dataclass
+class ArgumentStringError(ParameterizedError):
+    """Thrown when the specified argument string is malformed."""
+
+    @property
+    @override
+    def _message(self) -> str:
+        return (
+            "Coult not parse argument string '{0}'. "
+            "Argument '{1}' requires a whitespace separated value."
+        )
+
+    arg_string: str
+    arg: str
+
+
+@dataclass
 class UrlValidationError(ParameterizedError):
     """Thrown when the provided URL is invalid."""
 

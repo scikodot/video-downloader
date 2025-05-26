@@ -1,7 +1,7 @@
 """Various utilities for loaders."""
 
 from enum import StrEnum, auto
-from typing import Self
+from typing import Any, Self
 
 from lxml import etree
 from typing_extensions import override
@@ -27,42 +27,51 @@ class MediaType(StrEnum):
         raise exceptions.InvalidMimeTypeError(mime_type)
 
 
-class CustomElement(etree._Element):  # noqa: SLF001
+class MpdElement(etree._Element):  # noqa: SLF001
     """Wrapper class for ``lxml.etree._Element``.
 
     Raises exceptions instead of returning ``None`` when nothing is found.
     """
 
-    def __init__(self, elem: etree._Element) -> None:
+    def __init__(self, element: etree._Element) -> None:
         """Create a new ``lxml.etree._Element`` wrapper for ``elem``."""
-        self.elem = elem
+        self.element = element
 
     @override
-    def find(self, path, namespaces=None) -> "CustomElement":  # noqa: ANN001
-        res = self.elem.find(path, namespaces)
-        if not res:
+    def find(self, path, namespaces=None) -> "MpdElement":  # noqa: ANN001
+        res = self.element.find(path, namespaces)
+        if res is None:
             raise exceptions.InvalidMpdError
-        return CustomElement(res)
+        return MpdElement(res)
 
     # Ignore override typing; base method returns
     # a specific type (list[etree._Element], which is invariant)
     # instead of a more general one, hence no opportunity for typesafe subtyping.
     @override
-    def findall(self, path, namespaces=None) -> "list[CustomElement]":  # type: ignore[override] # noqa: ANN001
-        res = self.elem.findall(path, namespaces)
+    def findall(self, path, namespaces=None) -> "list[MpdElement]":  # type: ignore[override] # noqa: ANN001
+        res = self.element.findall(path, namespaces)
         if not res:
             raise exceptions.InvalidMpdError
-        return [CustomElement(elem) for elem in res]
+        return [MpdElement(elem) for elem in res]
 
     # Ignore override typing; base methods are @overload'ed,
     # @override cannot determine the right version,
     # and overriding the base implementation (with 'default' param) is unnecessary.
     @override
     def get(self, key) -> str:  # type: ignore[override]  # noqa: ANN001
-        res = self.elem.get(key)
+        res = self.element.get(key)
         if not res:
             raise exceptions.InvalidMpdError
         return res
+
+    # Re-route all attribute access to the underlying element,
+    # save for the element itself.
+    @override
+    def __getattribute__(self, name: str) -> Any:
+        element = super().__getattribute__("element")
+        if name == "element":
+            return element
+        return element.__getattribute__(name)
 
 
 class CustomElementTree(etree._ElementTree):  # noqa: SLF001
@@ -76,8 +85,8 @@ class CustomElementTree(etree._ElementTree):  # noqa: SLF001
         self.tree = tree
 
     @override
-    def find(self, path, namespaces=None) -> CustomElement:  # noqa: ANN001
+    def find(self, path, namespaces=None) -> MpdElement:  # noqa: ANN001
         res = self.tree.find(path, namespaces)
         if res is None:
             raise exceptions.InvalidMpdError
-        return CustomElement(res)
+        return MpdElement(res)

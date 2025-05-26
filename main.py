@@ -9,8 +9,10 @@ from typing import Any
 import validators
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
+from typing_extensions import override
 
 from exceptions import (
+    ArgumentStringError,
     ExceptionFormatter,
     PathNotFoundError,
     TooSmallValueError,
@@ -22,6 +24,7 @@ from loaders.vk import VkVideoLoader
 
 PROGRAM_NAME = "video-downloader"
 
+SHORT_ARG_LEN = 2
 MAX_PACKAGE_VERBOSITY = 2
 VERBOSITY_LEVELS = {
     # Package level logging, i. e. only current package
@@ -39,15 +42,33 @@ DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
 
-class ArgumentParserCustom(argparse.ArgumentParser):
+class CustomArgumentParser(argparse.ArgumentParser):
     """Custom argument parser that adds extra formatting for help messages."""
 
+    @override
     def add_argument(self, *args: Any, **kwargs: Any) -> argparse.Action:
-        """Add a blank line after every help message to visually separate entries."""
         if "help" in kwargs:
             kwargs["help"] += "\n \n"
 
         return super().add_argument(*args, **kwargs)
+
+    @override
+    def _parse_known_args(
+        self,
+        arg_strings: list[str],
+        namespace: argparse.Namespace,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        for arg_string in arg_strings:
+            if (
+                arg_string.startswith("-")
+                and not arg_string.startswith("--")
+                and len(arg_string) > SHORT_ARG_LEN
+            ):
+                for ch in arg_string[1:]:
+                    # TODO: move args declaration to .json
+                    if ch in "orqtu":
+                        raise ArgumentStringError(arg_string, f"-{ch}")
+        return super()._parse_known_args(arg_strings, namespace)
 
 
 def _validate_url(url: str) -> str:
@@ -114,7 +135,7 @@ def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = ArgumentParserCustom(
+    parser = CustomArgumentParser(
         prog=PROGRAM_NAME,
         formatter_class=argparse.RawTextHelpFormatter,
         add_help=False,
