@@ -72,21 +72,3 @@ class MpdElement(etree._Element):  # noqa: SLF001
         if name == "element":
             return element
         return element.__getattribute__(name)
-
-
-class CustomElementTree(etree._ElementTree):  # noqa: SLF001
-    """Wrapper class for ``lxml.etree._ElementTree``.
-
-    Raises exceptions instead of returning ``None`` when nothing is found.
-    """
-
-    def __init__(self, tree: etree._ElementTree) -> None:
-        """Create a new ``lxml.etree._ElementTree`` wrapper for ``tree``."""
-        self.tree = tree
-
-    @override
-    def find(self, path, namespaces=None) -> MpdElement:  # noqa: ANN001
-        res = self.tree.find(path, namespaces)
-        if res is None:
-            raise exceptions.InvalidMpdError
-        return MpdElement(res)

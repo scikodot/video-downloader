@@ -130,7 +130,12 @@ class LoaderBase(metaclass=ABCMeta):
         url: str,
     ) -> requests.Response:
         response = session.get(url)
-        self.logger.debug("Response: %s; Headers: %s", response, response.headers)
+        self.logger.debug(
+            "Response: %s; Encoding: %s; Headers: %s",
+            response,
+            response.encoding,
+            response.headers,
+        )
         return response
 
     # TODO: consider adding a small timeout to requests;

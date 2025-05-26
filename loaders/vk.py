@@ -24,10 +24,12 @@ from loaders.exceptions import (
     GeneratorExitError,
     MediaNotFoundError,
 )
-from loaders.utils import CustomElementTree, MediaType, MpdElement
+from loaders.utils import MediaType, MpdElement
 
+# Attribute names the are allowed to be kept in main MPD tag.
+MPD_ATTR_WHITELIST = {"mediaPresentationDuration"}
 # Quality name->value map, as per VK's .mpd file format.
-QUALITIES = {
+MPD_QUALITIES = {
     "mobile": 144,
     "lowest": 240,
     "low": 360,
@@ -255,7 +257,7 @@ class VkVideoLoader(LoaderBase):
 
     def _get_quality_from_representation(self, r: MpdElement) -> int:
         q_str = r.get("quality")
-        return QUALITIES[q_str]
+        return MPD_QUALITIES[q_str]
 
     def _get_audio_representation(
         self,
@@ -285,20 +287,19 @@ class VkVideoLoader(LoaderBase):
 
     def _get_resource_from_mpd(
         self,
-        mpd: CustomElementTree,
+        root: MpdElement,
         media_type: MediaType,
         base_url: str,
         directory: pathlib.Path,
     ) -> ResourceSpec:
         self.logger.debug("Getting %s resource...", media_type)
 
-        # TODO: consider getting rid of namespace {*} notion
-        adapt = mpd.find(
-            f"{{*}}Period/{{*}}AdaptationSet[@contentType='{media_type}']",
+        adapt = root.find(
+            f"Period/AdaptationSet[@contentType='{media_type}']",
         )
         self.logger.debug("AdaptationSet: %s", adapt.attrib)
 
-        reps = adapt.findall("{*}Representation")
+        reps = adapt.findall("Representation")
         self.logger.debug("Representations count: %s", len(reps))
 
         rep = None
@@ -318,7 +319,7 @@ class VkVideoLoader(LoaderBase):
         mime_type = rep.get("mimeType")
         file = mime_type.replace("/", ".")
 
-        segtemp = rep.find("{*}SegmentTemplate")
+        segtemp = rep.find("SegmentTemplate")
         self.logger.debug("SegmentTemplate: %s", segtemp.attrib)
 
         start_num = int(segtemp.get("startNumber"))
@@ -327,8 +328,8 @@ class VkVideoLoader(LoaderBase):
 
         # Get the number of .m4s segments via SegmentTimeline
         count = 0
-        segtime = segtemp.find("{*}SegmentTimeline")
-        for s in segtime.findall("{*}S"):
+        segtime = segtemp.find("SegmentTimeline")
+        for s in segtime.findall("S"):
             count += 1
             if r := s.get("r"):
                 count += int(r)
@@ -344,6 +345,24 @@ class VkVideoLoader(LoaderBase):
             target=directory / file,
         )
 
+    def _remove_mpd_ns(self, xml: str) -> str:
+        # Find indices where MPD attributes definition starts and ends.
+        start = xml.find("<MPD")
+        attr_end = start + xml[start:].find(">")
+        attr_start = start + 5
+
+        # No attributes present.
+        if attr_end <= attr_start:
+            return xml
+
+        # Filter out all attributes that do not belong to the whitelist,
+        # including primarily namespace declaring ones.
+        attrs = xml[attr_start:attr_end].split()
+        attrs_to_keep = [
+            attr for attr in attrs if attr.split("=", 1)[0] in MPD_ATTR_WHITELIST
+        ]
+        return xml[:attr_start] + " ".join(attrs_to_keep) + xml[attr_end:]
+
     def _get_media_from_mpd(
         self,
         mpd_url: str,
@@ -352,19 +371,23 @@ class VkVideoLoader(LoaderBase):
     ) -> MediaSpec:
         self.logger.debug("MPD URL: %s", mpd_url)
         response = self._download_resource(session, mpd_url)
-        mpd = CustomElementTree(
-            etree.fromstring(response.content, parser=etree.get_default_parser()),
-        )
+
+        # Remove namespaces from the retrieved XML before building the tree.
+        # This helps navigating the tree without specifying elements' namespaces,
+        # as there is anyway only a single namespace.
+        xml_no_ns = self._remove_mpd_ns(response.text)
+        mpd_root = MpdElement(etree.fromstring(xml_no_ns.encode("utf8")))
+
         base_url = mpd_url[: mpd_url.rfind("/") + 1]
         return MediaSpec(
             video=self._get_resource_from_mpd(
-                mpd,
+                mpd_root,
                 MediaType.VIDEO,
                 base_url,
                 directory,
             ),
             audio=self._get_resource_from_mpd(
-                mpd,
+                mpd_root,
                 MediaType.AUDIO,
                 base_url,
                 directory,
