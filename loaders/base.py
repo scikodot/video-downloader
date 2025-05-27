@@ -380,10 +380,7 @@ class LoaderBase(metaclass=ABCMeta):
 
                 video_with_audio.write_videofile(output_path)
 
-    def get(self, url: str) -> None:
-        """Navigate to ``url``, locate the video and load it."""
-        self.driver.get(url)
-
+    def _try_ensure_all(self) -> bool:
         try:
             self._ensure_video_accessible()
             self._ensure_filename_present_and_valid()
@@ -391,8 +388,12 @@ class LoaderBase(metaclass=ABCMeta):
             self._ensure_no_file_or_can_overwrite()
         except AccessRestrictedError:
             self.logger.exception("Could not access the video.")
-            return
+        else:
+            return True
 
+        return False
+
+    def _try_disable_autoplay(self) -> None:
         try:
             self.disable_autoplay()
         except TimeoutException:
@@ -400,19 +401,23 @@ class LoaderBase(metaclass=ABCMeta):
                 "Could not find an autoplay button to click, operation timed out.",
             )
 
+    def _try_get_target_quality(self) -> bool:
         try:
             self.target_quality = self._get_target_quality()
         except QualityNotFoundError:
             self.logger.exception(
                 "Could not find exact quality value as required by --exact flag.",
             )
-            return
         except TimeoutException:
             self.logger.exception(
                 "Could not obtain the available qualities, operation timed out.",
             )
-            return
+        else:
+            return True
 
+        return False
+
+    def _try_execute(self) -> None:
         try:
             self._execute()
         except TimeoutException:
@@ -430,4 +435,17 @@ class LoaderBase(metaclass=ABCMeta):
         except GeneratorExitError:
             self.logger.exception("Could not download files due to a generator error.")
 
+    def get(self, url: str) -> None:
+        """Navigate to ``url``, locate the video and load it."""
+        self.driver.get(url)
+
+        if not self._try_ensure_all():
+            return
+
+        self._try_disable_autoplay()
+
+        if not self._try_get_target_quality():
+            return
+
+        self._try_execute()
         return
