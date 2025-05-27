@@ -8,18 +8,6 @@ from exceptions import ParameterizedError
 from loaders.utils import MediaType
 
 
-@dataclass
-class GeneratorExitError(ParameterizedError):
-    """Thrown when it is unclear as to when the generator must exit."""
-
-    @property
-    @override
-    def _message(self) -> str:
-        return "Exit condition is undefined. {0}"
-
-    details: str = ""
-
-
 class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""
 

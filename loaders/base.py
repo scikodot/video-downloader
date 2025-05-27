@@ -22,7 +22,6 @@ from loaders.exceptions import (
     AccessRestrictedError,
     DownloadRequestError,
     FileExistsNoOverwriteError,
-    GeneratorExitError,
     InvalidMimeTypeError,
     InvalidMpdError,
     MediaNotFoundError,
@@ -64,7 +63,10 @@ DEFAULT_EXTENSION = ".mp4"
 class ResourceSpec:
     """Specification of a remote resource that needs to be downloaded."""
 
-    source: Iterable[str]
+    # Pairs of type (url, bytes_exp).
+    # If the expected number of bytes is not provided (= None),
+    # it is considered that any positive number of loaded bytes is acceptable.
+    source: Iterable[tuple[str, int | None]]
     target: pathlib.Path
 
 
@@ -147,7 +149,7 @@ class LoaderBase(metaclass=ABCMeta):
     ) -> None:
         bytes_count = 0
         with spec.target.open("ab") as file:
-            for url in spec.source:
+            for url, bytes_exp in spec.source:
                 response = self._download_resource(session, url)
                 if response.status_code not in RESPONSE_OK_CODES:
                     raise DownloadRequestError(
@@ -176,9 +178,6 @@ class LoaderBase(metaclass=ABCMeta):
                         )
                     )
 
-                # Set the obtained content length for the generator
-                self._content_length = content_length
-
                 # Packet is empty => previous packet was the last.
                 # Negative check is required,
                 # because Content-Length header value can be negative.
@@ -187,6 +186,19 @@ class LoaderBase(metaclass=ABCMeta):
 
                 for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
                     bytes_count += file.write(chunk)
+
+                if bytes_exp is not None:
+                    if bytes_exp <= 0:
+                        self.logger.warning(
+                            "Expected number of bytes for %s "
+                            "must be positive, but got %s.",
+                            url,
+                            bytes_exp,
+                        )
+
+                    # Packet is smaller than required => file is exhausted.
+                    if content_length < bytes_exp:
+                        break
 
         self.logger.debug("%s bytes loaded into '%s'", bytes_count, spec.target)
 
@@ -432,8 +444,6 @@ class LoaderBase(metaclass=ABCMeta):
             self.logger.exception("Could not find the required media.")
         except DownloadRequestError:
             self.logger.exception("Could not download files due to a request error.")
-        except GeneratorExitError:
-            self.logger.exception("Could not download files due to a generator error.")
 
     def get(self, url: str) -> None:
         """Navigate to ``url``, locate the video and load it."""

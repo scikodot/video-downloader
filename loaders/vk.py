@@ -21,7 +21,6 @@ from loaders.base import (
 )
 from loaders.exceptions import (
     AmbiguousUrlsError,
-    GeneratorExitError,
     MediaNotFoundError,
 )
 from loaders.utils import MediaType, MpdElement
@@ -210,7 +209,7 @@ class VkVideoLoader(LoaderBase):
         self._replay()
         return False
 
-    def _get_urls_by_bytes(self, url: str) -> Iterable[str]:
+    def _get_urls_by_bytes(self, url: str) -> Iterable[tuple[str, int | None]]:
         url_parsed = urlparser.urlparse(url)
         url_query = urlparser.parse_qs(url_parsed.query)
         bytes_start, bytes_num = 0, self.rate * 1024
@@ -221,17 +220,8 @@ class VkVideoLoader(LoaderBase):
                 query=urlparser.urlencode(url_query, doseq=True),
             ).geturl()
             self.logger.debug("URL: %s", url)
-            yield url
+            yield url, bytes_num
 
-            content_length = getattr(self, "_content_length", None)
-            if content_length is None:
-                raise GeneratorExitError(details="No content length was provided.")
-
-            # Last loaded packet is smaller than required => file is exhausted
-            if self._content_length < bytes_num:
-                break
-
-            self._content_length = None
             bytes_start += bytes_num
 
     def _get_urls_by_numbers(
@@ -240,11 +230,11 @@ class VkVideoLoader(LoaderBase):
         init_url: str,
         media_url: str,
         nums: Iterable[int],
-    ) -> Iterable[str]:
-        # First, yield the init segment
+    ) -> Iterable[tuple[str, int | None]]:
+        # First, yield the init segment.
         url = base_url + init_url
         self.logger.debug("Init segment: %s", url[url.rfind("/") + 1 :])
-        yield url
+        yield url, None
 
         # Find the '$Number$' placeholder and replace it
         # with actual number for each media segment.
@@ -253,7 +243,7 @@ class VkVideoLoader(LoaderBase):
         for num in nums:
             url = base_url + media_url[:i] + str(num) + media_url[j + 1 :]
             self.logger.debug("Segment #%s: %s", num, url[url.rfind("/") + 1 :])
-            yield url
+            yield url, None
 
     def _get_quality_from_representation(self, r: MpdElement) -> int:
         q_str = r.get("quality")
