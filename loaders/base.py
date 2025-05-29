@@ -140,6 +140,24 @@ class LoaderBase(metaclass=ABCMeta):
         )
         return response
 
+    def _raise_for_status(self, url: str, response: requests.Response) -> None:
+        if response.status_code not in RESPONSE_OK_CODES:
+            raise DownloadRequestError(
+                {
+                    "url": url,
+                    "code": response.status_code,
+                },
+            )
+
+    def _get_content_length(self, response: requests.Response) -> int | None:
+        if cr := response.headers.get("Content-Range"):
+            _, start, end, *_ = re.split(r"\s|-|/", cr)
+            return int(end) - int(start)
+        if cl := response.headers.get("Content-Length"):
+            return int(cl)
+
+        return None
+
     # TODO: consider adding a small timeout to requests;
     # loading many files too fast may cause suspicions on the host's side
     def _download_resource_by_spec(
@@ -151,41 +169,32 @@ class LoaderBase(metaclass=ABCMeta):
         with spec.target.open("ab") as file:
             for url, bytes_exp in spec.source:
                 response = self._download_resource(session, url)
-                if response.status_code not in RESPONSE_OK_CODES:
-                    raise DownloadRequestError(
-                        {
-                            "url": url,
-                            "code": response.status_code,
-                        },
-                    )
+                self._raise_for_status(url, response)
 
                 # Get the packet size.
-                headers = response.headers
-                content_length = 0
-                if "Content-Range" in headers:
-                    content_range = re.split(r"\s|-|/", headers["Content-Range"])
-                    start, end = (int(x) for x in content_range[1:3])
-                    content_length = end - start
-                elif "Content-Length" in headers:
-                    content_length = int(headers["Content-Length"])
-                # If no headers are present for content length,
-                # calculate it from the actual content.
-                else:
-                    content_length = sum(
-                        len(chunk)
-                        for chunk in response.iter_content(
-                            chunk_size=RESPONSE_CHUNK_SIZE,
-                        )
-                    )
+                content_length = self._get_content_length(response)
 
                 # Packet is empty => previous packet was the last.
                 # Negative check is required,
-                # because Content-Length header value can be negative.
-                if content_length <= 0:
+                # because 'Content-Length' header value can be negative.
+                if content_length is not None and content_length <= 0:
                     break
 
+                # Write the response data to the file in chunks.
+                bytes_read = 0
                 for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
-                    bytes_count += file.write(chunk)
+                    bytes_read += file.write(chunk)
+                bytes_count += bytes_read
+
+                # Set the content length if it could not be obtained from headers.
+                if content_length is None:
+                    content_length = bytes_read
+
+                # Packet is empty.
+                # Here, content length can only be >= 0,
+                # so no negative check is required.
+                if content_length == 0:
+                    break
 
                 if bytes_exp is not None:
                     if bytes_exp <= 0:
