@@ -9,6 +9,7 @@ from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime as dt
+from io import BufferedWriter
 from typing import Any
 
 import moviepy
@@ -27,6 +28,7 @@ from loaders.exceptions import (
     MediaNotFoundError,
     QualityNotFoundError,
 )
+from loaders.utils import LimitedResponse
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -52,7 +54,6 @@ DEFAULT_CHROME_SWITCHES = [
 ]
 PERF_BUFFER_SIZE = 1000
 RESPONSE_OK_CODES = range(200, 300)
-RESPONSE_CHUNK_SIZE = 128
 
 DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
@@ -86,6 +87,7 @@ class LoaderBase(metaclass=ABCMeta):
         try:
             self.output_path = pathlib.Path(kwargs["output_path"])
             self.rate = kwargs["rate"]
+            self.speed_limit = kwargs["speed_limit"]
             self.quality = kwargs["quality"]
             self.timeout = kwargs["timeout"]
             self.exact = kwargs["exact"]
@@ -130,7 +132,7 @@ class LoaderBase(metaclass=ABCMeta):
         self,
         session: requests.Session,
         url: str,
-    ) -> requests.Response:
+    ) -> LimitedResponse:
         response = session.get(url)
         self.logger.debug(
             "Response: %s; Encoding: %s; Headers: %s",
@@ -138,9 +140,9 @@ class LoaderBase(metaclass=ABCMeta):
             response.encoding,
             response.headers,
         )
-        return response
+        return LimitedResponse(response)
 
-    def _raise_for_status(self, url: str, response: requests.Response) -> None:
+    def _raise_for_status(self, url: str, response: LimitedResponse) -> None:
         if response.status_code not in RESPONSE_OK_CODES:
             raise DownloadRequestError(
                 {
@@ -149,7 +151,7 @@ class LoaderBase(metaclass=ABCMeta):
                 },
             )
 
-    def _get_content_length(self, response: requests.Response) -> int | None:
+    def _get_content_length(self, response: LimitedResponse) -> int | None:
         if cr := response.headers.get("Content-Range"):
             _, start, end, *_ = re.split(r"\s|-|/", cr)
             return int(end) - int(start)
@@ -181,9 +183,7 @@ class LoaderBase(metaclass=ABCMeta):
                     break
 
                 # Write the response data to the file in chunks.
-                bytes_read = 0
-                for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
-                    bytes_read += file.write(chunk)
+                bytes_read = self._append_file(response, file)
                 bytes_count += bytes_read
 
                 # Set the content length if it could not be obtained from headers.
@@ -211,13 +211,26 @@ class LoaderBase(metaclass=ABCMeta):
 
         self.logger.debug("%s bytes loaded into '%s'", bytes_count, spec.target)
 
-    def _write_file(self, response: requests.Response, path: pathlib.Path) -> None:
+    def _append_file(self, response: LimitedResponse, file: BufferedWriter) -> int:
+        bytes_count = 0
+        for chunk in response.iter_content(
+            speed_limit=self.speed_limit,
+            logger=self.logger,
+        ):
+            bytes_count += file.write(chunk)
+        return bytes_count
+
+    def _write_file(self, response: LimitedResponse, path: pathlib.Path) -> int:
         bytes_count = 0
         with pathlib.Path(path).open("wb") as f:
-            for chunk in response.iter_content(chunk_size=RESPONSE_CHUNK_SIZE):
+            for chunk in response.iter_content(
+                speed_limit=self.speed_limit,
+                logger=self.logger,
+            ):
                 bytes_count += f.write(chunk)
 
         self.logger.debug("%s bytes loaded into '%s'", bytes_count, path)
+        return bytes_count
 
     def _ensure_video_accessible(self) -> None:
         access_restricted_msg = self.check_restrictions()

@@ -95,11 +95,16 @@ def _validate_output_path(output_path: str) -> str:
 
 
 def _validate_rate(rate: int) -> int:
-    rate = int(rate)
+    rate = int(rate)  # TODO: ???
     if rate < MINIMUM_RATE:
         raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
 
     return rate
+
+
+def _validate_speed_limit(speed_limit: int) -> int:
+    # TODO: throw a warning of too low/high value?
+    return speed_limit
 
 
 def _validate_quality(quality: int) -> int:
@@ -165,6 +170,7 @@ def _parse_args() -> argparse.Namespace:
         type=_validate_output_path,
     )
 
+    # TODO: rename to '--chunk' or '--chunk-size'
     parser.add_argument(
         "-r",
         "--rate",
@@ -174,6 +180,19 @@ def _parse_args() -> argparse.Namespace:
         ),
         default=DEFAULT_RATE,
         type=_validate_rate,
+    )
+
+    parser.add_argument(
+        "-s",
+        "--speed-limit",
+        help=(
+            "Maximum connection speed to establish.\n"
+            "Generally, higher values are preferrable, "
+            "but one must take care of not becoming subject to possible restrictions "
+            "that the server host may impose "
+            "if the client consumes too much traffic at once."
+        ),
+        type=_validate_speed_limit,
     )
 
     parser.add_argument(
