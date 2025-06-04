@@ -160,8 +160,6 @@ class LoaderBase(metaclass=ABCMeta):
 
         return None
 
-    # TODO: consider adding a small timeout to requests;
-    # loading many files too fast may cause suspicions on the host's side
     def _download_resource_by_spec(
         self,
         session: requests.Session,

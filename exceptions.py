@@ -71,12 +71,12 @@ class ArgumentStringError(ParameterizedError):
     @override
     def _message(self) -> str:
         return (
-            "Coult not parse argument string '{0}'. "
-            "Argument '{1}' requires a whitespace separated value."
+            "Coult not parse argument string '{1}'. "
+            "Argument '{0}' requires a whitespace separated value."
         )
 
-    arg_string: str
     arg: str
+    arg_string: str
 
 
 @dataclass

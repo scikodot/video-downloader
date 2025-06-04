@@ -4,7 +4,8 @@ import argparse
 import logging
 import pathlib
 import urllib.parse as urlparser
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
 
 import validators
 from selenium import webdriver
@@ -67,7 +68,7 @@ class CustomArgumentParser(argparse.ArgumentParser):
                 for ch in arg_string[1:]:
                     # TODO: move args declaration to .json
                     if ch in "orqtu":
-                        raise ArgumentStringError(arg_string, f"-{ch}")
+                        raise ArgumentStringError(f"-{ch}", arg_string)
         return super()._parse_known_args(arg_strings, namespace)
 
 
@@ -94,29 +95,55 @@ def _validate_output_path(output_path: str) -> str:
     return str(path)
 
 
+T = TypeVar("T", int, float)
+
+
+def _assert_arg_type(t: type[T]) -> Callable[[Callable[[T], T]], Callable[[str], T]]:
+    """Assert that the function's argument is convertible to the specified type.
+
+    Returns a new function that accepts the argument as a string
+    and attempts to convert it to the specified type.
+    If the conversion is successful, calls the decorated function
+    with the converted argument.
+    """
+
+    def decorator(f: Callable[[T], T]) -> Callable[[str], T]:
+        def wrapper(arg: str) -> T:
+            return f(t(arg))
+
+        # This ensures that the exception messages contain
+        # the name of the actual type to which the argument is converted,
+        # instead of the function's name.
+        wrapper.__name__ = t.__name__
+        return wrapper
+
+    return decorator
+
+
+@_assert_arg_type(int)
 def _validate_rate(rate: int) -> int:
-    rate = int(rate)  # TODO: ???
     if rate < MINIMUM_RATE:
         raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
 
     return rate
 
 
+@_assert_arg_type(int)
 def _validate_speed_limit(speed_limit: int) -> int:
     # TODO: throw a warning of too low/high value?
     return speed_limit
 
 
+@_assert_arg_type(int)
 def _validate_quality(quality: int) -> int:
-    quality = int(quality)
     if quality < MINIMUM_QUALITY:
         raise TooSmallValueError(quality, MINIMUM_QUALITY, "p", indent="")
 
     return quality
 
 
+@_assert_arg_type(int)
 def _validate_timeout(timeout: int) -> int:
-    timeout = int(timeout)
     if timeout < MINIMUM_TIMEOUT:
         raise TooSmallValueError(timeout, MINIMUM_TIMEOUT, "second(-s)")
 
