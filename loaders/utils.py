@@ -1,10 +1,10 @@
 """Various utilities for loaders."""
 
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from enum import StrEnum, auto
 from logging import Logger
-from typing import Any, Self
+from typing import Any, Self, TypeVar
 
 from lxml import etree
 from requests import Response
@@ -31,6 +31,42 @@ class MediaType(StrEnum):
         raise exceptions.InvalidMimeTypeError(mime_type)
 
 
+T = TypeVar("T")
+
+
+def proxy_attr(proxy_name: str) -> Callable[[type[T]], type[T]]:
+    """Proxy attribute access to the attribute with the specified name.
+
+    Returns a new class with a patched ``__getattribute__`` method
+    that uses the same method of the ``proxy_name`` attribute.
+
+    In other words, ``@proxy_attr("obj")`` makes calls to ``self.attr``
+    return ``self.obj.attr``, and calls to ``self.obj`` return the ``obj`` itself.
+    """
+
+    def decorator(cls: type[T]) -> type[T]:
+        _getattribute = cls.__getattribute__
+
+        def getattribute_proxy(self: T, name: str) -> Any:  # noqa: ANN401
+            # Return source attribute if it is defined
+            if name in cls.__dict__:
+                return _getattribute(self, name)
+
+            # Return proxy itself if it is requested
+            proxy = _getattribute(self, proxy_name)
+            if name == proxy_name:
+                return proxy
+
+            # Return proxy attribute otherwise
+            return proxy.__getattribute__(name)
+
+        cls.__getattribute__ = getattribute_proxy
+        return cls
+
+    return decorator
+
+
+@proxy_attr("element")
 class MpdElement(etree._Element):  # noqa: SLF001
     # TODO: use identifiers in docstrings, like :class:, etc.?
     """Wrapper class for ``lxml.etree._Element``.
@@ -69,24 +105,15 @@ class MpdElement(etree._Element):  # noqa: SLF001
             raise exceptions.InvalidMpdError
         return res
 
-    # Re-route all attribute access to the underlying element,
-    # save for the element itself.
-    @override
-    def __getattribute__(self, name: str) -> Any:
-        element = super().__getattribute__("element")
-        if name == "element":
-            return element
-        return element.__getattribute__(name)
 
-
-DEFAULT_SPEED_LIMIT = 1024
-DEFAULT_CHUNK_SIZE = 1024**2
 DEFAULT_SEGMENTS_COUNT = 1024
 DEFAULT_SLEEP_THRESHOLD = 0.005
-BYTES_PER_MEGABIT = 128 * 1024
-BYTES_PER_KILOBYTE = 1024
+# TODO: move common constants to a separate place
+BYTES_PER_MEBIBIT = 128 * 1024
+BYTES_PER_KIBIBYTE = 1024
 
 
+@proxy_attr("response")
 class LimitedResponse(Response):
     """Wrapper class for ``requests.Response``.
 
@@ -98,23 +125,34 @@ class LimitedResponse(Response):
         """Create a new wrapper for ``response``."""
         self.response = response
 
-    def iter_content(  # type: ignore[override]
+    def iter_content(
         self,
-        *,
-        # chunk_size: int | None = 1,
-        decode_unicode: bool = False,
-        speed_limit: int = DEFAULT_SPEED_LIMIT,
-        segments_count: int = DEFAULT_SEGMENTS_COUNT,
-        sleep_threshold: float = DEFAULT_SLEEP_THRESHOLD,
+        chunk_size: int | None = None,
+        decode_unicode: bool = False,  # noqa: FBT001, FBT002
+        speed_limit: int | None = None,
+        segments_count: int | None = None,
+        sleep_threshold: float | None = None,
         logger: Logger | None = None,
     ) -> Iterator[Any]:
         """Iterate over the response data, same as ``requests.Response.iter_content``.
 
-        This method, however, does not have its regular ``chunk_size`` parameter,
-        as it is calculated automatically.
+        This method, however, interprets ``chunk_size`` parameter
+        as a **maximum** chunk size, as the actual chunk size is calculated in process,
+        and hence uses a ``None`` default value to not limit the chunk size
+        if the limit is not provided explicitly.
 
         Other parameters can be used for limiting the download speed.
         """
+        # Return the content as-is if no speed limit is provided.
+        if speed_limit is None:
+            return self.response.iter_content(chunk_size, decode_unicode)
+
+        # TODO: handle cases:
+        # chunk_size <= 0
+        # speed_limit <= 0
+        # segments_count <= 1
+        # sleep_threshold <= 0
+
         # Instead of messing with sockets, let's use a naive approach:
         # 1. Let `r` -- max download speed.
         # 2. Partition every 1 second time interval into `k` segments,
@@ -131,14 +169,16 @@ class LimitedResponse(Response):
         # That is why we call it "amortized".
 
         # Use short names for better readability.
-        r, k, s = speed_limit * BYTES_PER_KILOBYTE, segments_count, sleep_threshold
+        r = speed_limit * BYTES_PER_MEBIBIT
+        k = segments_count or DEFAULT_SEGMENTS_COUNT
+        s = sleep_threshold or DEFAULT_SLEEP_THRESHOLD
 
         r0 = int(r // k)  # bytes per segment
         t0 = 1 / k  # segment duration
 
         # Clamp the number of bytes per segment to the max chunk size.
         # This ensures the chunks do not occupy too much memory for high speed limits.
-        c = min(r0, DEFAULT_CHUNK_SIZE)
+        c = r0 if chunk_size is None else min(r0, chunk_size)
 
         if logger:
             logger.debug(
@@ -178,8 +218,8 @@ class LimitedResponse(Response):
 
             if logger:
                 logger.debug(
-                    "Speed: %.3f Mbps; Raw download time: %f; Lag time: %f",
-                    b / (tc_end - start) / BYTES_PER_MEGABIT,
+                    "Speed: %.3f Mibps; Raw download time: %f; Lag time: %f",
+                    b / (tc_end - start) / BYTES_PER_MEBIBIT,
                     tc,
                     tl,
                 )

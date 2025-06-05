@@ -86,7 +86,7 @@ class LoaderBase(metaclass=ABCMeta):
         """Create a new instance of the loader class."""
         try:
             self.output_path = pathlib.Path(kwargs["output_path"])
-            self.rate = kwargs["rate"]
+            self.chunk_size = kwargs["chunk_size"]
             self.speed_limit = kwargs["speed_limit"]
             self.quality = kwargs["quality"]
             self.timeout = kwargs["timeout"]
@@ -212,6 +212,7 @@ class LoaderBase(metaclass=ABCMeta):
     def _append_file(self, response: LimitedResponse, file: BufferedWriter) -> int:
         bytes_count = 0
         for chunk in response.iter_content(
+            chunk_size=self.chunk_size,
             speed_limit=self.speed_limit,
             logger=self.logger,
         ):
@@ -222,6 +223,7 @@ class LoaderBase(metaclass=ABCMeta):
         bytes_count = 0
         with pathlib.Path(path).open("wb") as f:
             for chunk in response.iter_content(
+                chunk_size=self.chunk_size,
                 speed_limit=self.speed_limit,
                 logger=self.logger,
             ):

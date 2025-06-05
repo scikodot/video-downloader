@@ -38,7 +38,7 @@ VERBOSITY_LEVELS = {
 }
 
 DEFAULT_OUTPUT_SUBPATH = "output"
-DEFAULT_RATE, MINIMUM_RATE = 1024, 128
+DEFAULT_CHUNK_SIZE, MINIMUM_CHUNK_SIZE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
@@ -121,11 +121,11 @@ def _assert_arg_type(t: type[T]) -> Callable[[Callable[[T], T]], Callable[[str],
 
 
 @_assert_arg_type(int)
-def _validate_rate(rate: int) -> int:
-    if rate < MINIMUM_RATE:
-        raise TooSmallValueError(rate, MINIMUM_RATE, "KB(-s)")
+def _validate_chunk_size(chunk_size: int) -> int:
+    if chunk_size < MINIMUM_CHUNK_SIZE:
+        raise TooSmallValueError(chunk_size, MINIMUM_CHUNK_SIZE, "KB(-s)")
 
-    return rate
+    return chunk_size
 
 
 @_assert_arg_type(int)
@@ -197,23 +197,23 @@ def _parse_args() -> argparse.Namespace:
         type=_validate_output_path,
     )
 
-    # TODO: rename to '--chunk' or '--chunk-size'
     parser.add_argument(
-        "-r",
-        "--rate",
+        "-c",
+        "--chunk-size",
         help=(
-            "How many kilobytes (KBs) to download on every request.\n"
-            "Higher rates are advised for longer videos."
+            "Number of kibibytes (KiBs) to download on every request "
+            "in case of chunked data.\n"
+            "Higher values are advised for longer videos."
         ),
-        default=DEFAULT_RATE,
-        type=_validate_rate,
+        default=DEFAULT_CHUNK_SIZE,
+        type=_validate_chunk_size,
     )
 
     parser.add_argument(
         "-s",
         "--speed-limit",
         help=(
-            "Maximum connection speed to establish.\n"
+            "Maximum connection speed (Mib/s) to establish.\n"
             "Generally, higher values are preferrable, "
             "but one must take care of not becoming subject to possible restrictions "
             "that the server host may impose "

@@ -14,6 +14,7 @@ from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
 
+from loaders import utils
 from loaders.base import (
     LoaderBase,
     MediaSpec,
@@ -212,7 +213,7 @@ class VkVideoLoader(LoaderBase):
     def _get_urls_by_bytes(self, url: str) -> Iterable[tuple[str, int | None]]:
         url_parsed = urlparser.urlparse(url)
         url_query = urlparser.parse_qs(url_parsed.query)
-        bytes_start, bytes_num = 0, self.rate * 1024
+        bytes_start, bytes_num = 0, self.chunk_size * utils.BYTES_PER_KIBIBYTE
         while True:
             bytes_end = bytes_start + bytes_num - 1
             url_query["bytes"][0] = f"{bytes_start}-{bytes_end}"
@@ -400,6 +401,8 @@ class VkVideoLoader(LoaderBase):
                 # TODO: consider getting full file size from Content-Range header
                 response = self._download_resource(session, url)
 
+                # TODO: if empty, InvalidMimeTypeError will be printed w/o arg;
+                # consider adding a separate exception for empty Content-Type
                 mime_type = response.headers.get("Content-Type", "")
                 media_type = MediaType.from_mime_type(mime_type)
 
