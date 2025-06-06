@@ -14,6 +14,7 @@ from typing_extensions import override
 # Otherwise it would cause a circular import error,
 # as this module is referenced by exceptions' module.
 import constants
+from exceptions import TooSmallValueError
 from loaders import exceptions
 
 
@@ -107,8 +108,9 @@ class MpdElement(etree._Element):  # noqa: SLF001
         return res
 
 
-DEFAULT_SEGMENTS_COUNT = 1024
-DEFAULT_SLEEP_THRESHOLD = 0.005
+MINIMUM_CHUNK_SIZE = 1
+DEFAULT_SEGMENTS_COUNT, MINIMUM_SEGMENTS_COUNT = 1024, 1
+DEFAULT_SLEEP_THRESHOLD, MINIMUM_SLEEP_THRESHOLD = 0.005, 0
 
 
 @proxy_attr("response")
@@ -123,11 +125,48 @@ class LimitedResponse(Response):
         """Create a new wrapper for ``response``."""
         self.response = response
 
+    def _validate_chunk_size(self, chunk_size: int | None) -> None:
+        if chunk_size is not None and chunk_size < MINIMUM_CHUNK_SIZE:
+            raise TooSmallValueError(
+                chunk_size,
+                lower_bound=MINIMUM_CHUNK_SIZE,
+                inclusive=True,
+                units="byte(-s)",
+            )
+
+    def _validate_speed_limit(self, speed_limit: float | None) -> None:
+        if speed_limit is not None and speed_limit <= 0:
+            raise TooSmallValueError(
+                speed_limit,
+                lower_bound=0,
+                inclusive=False,
+                units="Mibps",
+            )
+
+    def _validate_segments_count(self, segments_count: int | None) -> None:
+        if segments_count is not None and segments_count < MINIMUM_SEGMENTS_COUNT:
+            raise TooSmallValueError(
+                segments_count,
+                lower_bound=MINIMUM_SEGMENTS_COUNT,
+                inclusive=True,
+                units="",
+                indent="",
+            )
+
+    def _validate_sleep_threshold(self, sleep_threshold: float | None) -> None:
+        if sleep_threshold is not None and sleep_threshold < MINIMUM_SLEEP_THRESHOLD:
+            raise TooSmallValueError(
+                sleep_threshold,
+                lower_bound=MINIMUM_SLEEP_THRESHOLD,
+                inclusive=True,
+                units="second(-s)",
+            )
+
     def iter_content(
         self,
         chunk_size: int | None = None,
         decode_unicode: bool = False,  # noqa: FBT001, FBT002
-        speed_limit: int | None = None,
+        speed_limit: float | None = None,
         segments_count: int | None = None,
         sleep_threshold: float | None = None,
         logger: Logger | None = None,
@@ -141,15 +180,20 @@ class LimitedResponse(Response):
 
         Other parameters can be used for limiting the download speed.
         """
+        self._validate_chunk_size(chunk_size)
+
         # Return the content as-is if no speed limit is provided.
         if speed_limit is None:
             return self.response.iter_content(chunk_size, decode_unicode)
+        self._validate_speed_limit(speed_limit)
 
-        # TODO: handle cases:
-        # chunk_size <= 0
-        # speed_limit <= 0
-        # segments_count <= 1
-        # sleep_threshold <= 0
+        if segments_count is None:
+            segments_count = DEFAULT_SEGMENTS_COUNT
+        self._validate_segments_count(segments_count)
+
+        if sleep_threshold is None:
+            sleep_threshold = DEFAULT_SLEEP_THRESHOLD
+        self._validate_sleep_threshold(sleep_threshold)
 
         # Instead of messing with sockets, let's use a naive approach:
         # 1. Let `r` -- max download speed.
@@ -168,15 +212,15 @@ class LimitedResponse(Response):
 
         # Use short names for better readability.
         r = speed_limit * constants.BYTES_PER_MEBIBIT
-        k = segments_count or DEFAULT_SEGMENTS_COUNT
-        s = sleep_threshold or DEFAULT_SLEEP_THRESHOLD
+        k = segments_count
+        s = sleep_threshold
 
         r0 = int(r // k)  # bytes per segment
         t0 = 1 / k  # segment duration
 
         # Clamp the number of bytes per segment to the max chunk size.
         # This ensures the chunks do not occupy too much memory for high speed limits.
-        c = r0 if chunk_size is None else min(r0, chunk_size)
+        c = r0 if not chunk_size else min(r0, chunk_size)
 
         if logger:
             logger.debug(
