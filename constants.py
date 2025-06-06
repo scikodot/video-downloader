@@ -1,0 +1,4 @@
+"""Common constants."""
+
+BYTES_PER_MEBIBIT = 128 * 1024
+BYTES_PER_KIBIBYTE = 1024

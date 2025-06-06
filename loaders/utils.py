@@ -13,6 +13,7 @@ from typing_extensions import override
 # Import whole module instead of specific exceptions.
 # Otherwise it would cause a circular import error,
 # as this module is referenced by exceptions' module.
+import constants
 from loaders import exceptions
 
 
@@ -24,6 +25,7 @@ class MediaType(StrEnum):
 
     @classmethod
     def from_mime_type(cls, mime_type: str) -> Self:
+        """Get ``MediaType`` object corresponding to the specified ``mime_type``."""
         for media_type in cls:
             if mime_type.startswith(media_type):
                 return media_type
@@ -68,7 +70,6 @@ def proxy_attr(proxy_name: str) -> Callable[[type[T]], type[T]]:
 
 @proxy_attr("element")
 class MpdElement(etree._Element):  # noqa: SLF001
-    # TODO: use identifiers in docstrings, like :class:, etc.?
     """Wrapper class for ``lxml.etree._Element``.
 
     Raises exceptions instead of returning ``None`` when nothing is found.
@@ -108,9 +109,6 @@ class MpdElement(etree._Element):  # noqa: SLF001
 
 DEFAULT_SEGMENTS_COUNT = 1024
 DEFAULT_SLEEP_THRESHOLD = 0.005
-# TODO: move common constants to a separate place
-BYTES_PER_MEBIBIT = 128 * 1024
-BYTES_PER_KIBIBYTE = 1024
 
 
 @proxy_attr("response")
@@ -169,7 +167,7 @@ class LimitedResponse(Response):
         # That is why we call it "amortized".
 
         # Use short names for better readability.
-        r = speed_limit * BYTES_PER_MEBIBIT
+        r = speed_limit * constants.BYTES_PER_MEBIBIT
         k = segments_count or DEFAULT_SEGMENTS_COUNT
         s = sleep_threshold or DEFAULT_SLEEP_THRESHOLD
 
@@ -219,7 +217,7 @@ class LimitedResponse(Response):
             if logger:
                 logger.debug(
                     "Speed: %.3f Mibps; Raw download time: %f; Lag time: %f",
-                    b / (tc_end - start) / BYTES_PER_MEBIBIT,
+                    b / (tc_end - start) / constants.BYTES_PER_MEBIBIT,
                     tc,
                     tl,
                 )
