@@ -4,7 +4,7 @@ import io
 import logging
 import traceback
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import KW_ONLY, dataclass
 
 from typing_extensions import override
 
@@ -110,9 +110,12 @@ class TooSmallValueError(ParameterizedError):
     @property
     @override
     def _message(self) -> str:
-        return "Value {0} is too small, must be at least {1}{3}{2}."
+        bound_clause = "at least" if self.inclusive else "greater than"
+        return "Value {0} is too small, must be " + bound_clause + " {1}{4}{3}."
 
     value: int | float
+    _: KW_ONLY
     lower_bound: int | float
+    inclusive: bool
     units: str
     indent: str = " "

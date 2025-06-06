@@ -123,21 +123,38 @@ def _assert_arg_type(t: type[T]) -> Callable[[Callable[[T], T]], Callable[[str],
 @_assert_arg_type(int)
 def _validate_chunk_size(chunk_size: int) -> int:
     if chunk_size < MINIMUM_CHUNK_SIZE:
-        raise TooSmallValueError(chunk_size, MINIMUM_CHUNK_SIZE, "KB(-s)")
+        raise TooSmallValueError(
+            chunk_size,
+            lower_bound=MINIMUM_CHUNK_SIZE,
+            inclusive=True,
+            units="KB(-s)",
+        )
 
     return chunk_size
 
 
-@_assert_arg_type(int)
-def _validate_speed_limit(speed_limit: int) -> int:
-    # TODO: throw a warning of too low/high value?
+@_assert_arg_type(float)
+def _validate_speed_limit(speed_limit: float) -> float:
+    if speed_limit <= 0:
+        raise TooSmallValueError(
+            speed_limit,
+            lower_bound=0,
+            inclusive=False,
+            units="Mibps",
+        )
     return speed_limit
 
 
 @_assert_arg_type(int)
 def _validate_quality(quality: int) -> int:
     if quality < MINIMUM_QUALITY:
-        raise TooSmallValueError(quality, MINIMUM_QUALITY, "p", indent="")
+        raise TooSmallValueError(
+            quality,
+            lower_bound=MINIMUM_QUALITY,
+            inclusive=True,
+            units="p",
+            indent="",
+        )
 
     return quality
 
@@ -145,7 +162,12 @@ def _validate_quality(quality: int) -> int:
 @_assert_arg_type(int)
 def _validate_timeout(timeout: int) -> int:
     if timeout < MINIMUM_TIMEOUT:
-        raise TooSmallValueError(timeout, MINIMUM_TIMEOUT, "second(-s)")
+        raise TooSmallValueError(
+            timeout,
+            lower_bound=MINIMUM_TIMEOUT,
+            inclusive=True,
+            units="second(-s)",
+        )
 
     return timeout
 
