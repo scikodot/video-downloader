@@ -26,6 +26,7 @@ from loaders.exceptions import (
     InvalidMimeTypeError,
     InvalidMpdError,
     MediaNotFoundError,
+    MimeTypeNotFoundError,
     QualityNotFoundError,
 )
 from loaders.utils import LimitedResponse
@@ -458,6 +459,8 @@ class LoaderBase(metaclass=ABCMeta):
             self.logger.exception(
                 "Could not obtain the required URLs, operation timed out.",
             )
+        except MimeTypeNotFoundError:
+            self.logger.exception("MIME type was not provided in response headers.")
         except InvalidMimeTypeError:
             self.logger.exception("Could not recognize MIME type of the content.")
         except InvalidMpdError:

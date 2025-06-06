@@ -33,6 +33,10 @@ class FileExistsNoOverwriteError(Exception):
     """Thrown when the file already exists and ``--overwrite`` flag is not used."""
 
 
+class MimeTypeNotFoundError(Exception):
+    """Thrown when the MIME type was not found among response headers."""
+
+
 class InvalidMimeTypeError(Exception):
     """Thrown when the MIME type of the retrieved content is invalid."""
 

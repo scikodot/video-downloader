@@ -23,6 +23,7 @@ from loaders.base import (
 from loaders.exceptions import (
     AmbiguousUrlsError,
     MediaNotFoundError,
+    MimeTypeNotFoundError,
 )
 from loaders.utils import MediaType, MpdElement
 
@@ -401,9 +402,10 @@ class VkVideoLoader(LoaderBase):
                 # TODO: consider getting full file size from Content-Range header
                 response = self._download_resource(session, url)
 
-                # TODO: if empty, InvalidMimeTypeError will be printed w/o arg;
-                # consider adding a separate exception for empty Content-Type
-                mime_type = response.headers.get("Content-Type", "")
+                mime_type = response.headers.get("Content-Type")
+                if not mime_type:
+                    raise MimeTypeNotFoundError
+
                 media_type = MediaType.from_mime_type(mime_type)
 
                 file = mime_type.replace("/", f".type{urls_type}.")
