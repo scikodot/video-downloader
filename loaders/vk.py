@@ -27,6 +27,8 @@ from loaders.exceptions import (
 )
 from loaders.utils import MediaType, MpdElement
 
+HTTP_BLOCKED = 451
+HTTP_BLOCKED_NAME = "Unavailable For Legal Reasons"
 # Attribute names the are allowed to be kept in main MPD tag.
 MPD_ATTR_WHITELIST = {"mediaPresentationDuration"}
 # Quality name->value map, as per VK's .mpd file format.
@@ -60,15 +62,15 @@ class VkVideoLoader(LoaderBase):
             pass
 
         # The video is blocked in the current geolocation
-        # TODO: this must be done via response codes, not via HTML
-        try:
-            body = self.driver.find_element(By.CSS_SELECTOR, "body")
-            if elem_count_str := body.get_attribute("childElementCount"):
-                elem_count = int(elem_count_str)
-                if elem_count == 1:
-                    return body.get_attribute("innerText")
-        except NoSuchElementException:
-            pass
+        status_code = self._get_status_code()
+        if status_code == HTTP_BLOCKED:
+            try:
+                body = self.driver.find_element(By.CSS_SELECTOR, "body")
+                return body.get_attribute("innerText")
+            except NoSuchElementException:
+                return HTTP_BLOCKED_NAME
+
+        return None
 
     @override
     def disable_autoplay(self) -> None:

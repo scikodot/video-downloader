@@ -356,6 +356,7 @@ def _get_chrome_options(
     # options.add_argument('--disable-web-security')  # Disable web security
     # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
     # options.add_argument('--disable-webrtc')  # Disable WebRTC
+    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
     return options
 
 

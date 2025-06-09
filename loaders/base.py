@@ -1,6 +1,7 @@
 """Contains base functionality for loading videos."""
 
 import datetime
+import json
 import logging
 import pathlib
 import re
@@ -54,7 +55,7 @@ DEFAULT_CHROME_SWITCHES = [
     # "flag-switches-end"
 ]
 PERF_BUFFER_SIZE = 1000
-RESPONSE_OK_CODES = range(200, 300)
+HTTP_OK_CODES = range(200, 300)
 
 DEFAULT_VIDEO_PREFIX = "video"
 DEFAULT_AUDIO_PREFIX = "audio"
@@ -86,6 +87,7 @@ class LoaderBase(metaclass=ABCMeta):
     def __init__(self, driver: WebDriver, **kwargs: Any) -> None:
         """Create a new instance of the loader class."""
         try:
+            self.url = kwargs["url"]
             self.output_path = pathlib.Path(kwargs["output_path"])
             self.chunk_size = kwargs["chunk_size"]
             self.speed_limit = kwargs["speed_limit"]
@@ -144,7 +146,7 @@ class LoaderBase(metaclass=ABCMeta):
         return LimitedResponse(response)
 
     def _raise_for_status(self, url: str, response: LimitedResponse) -> None:
-        if response.status_code not in RESPONSE_OK_CODES:
+        if response.status_code not in HTTP_OK_CODES:
             raise DownloadRequestError(
                 {
                     "url": url,
@@ -336,6 +338,32 @@ class LoaderBase(metaclass=ABCMeta):
             )
 
         return target_quality
+
+    def _get_status_code(self) -> int | None:
+        request_id = None
+        logs = self.driver.get_log("performance")
+        for log in logs:
+            message = json.loads(log["message"])["message"]
+            self.logger.debug(message)
+
+            method = message.get("method")
+            params = message.get("params")
+
+            # Find the first request to the specified URL
+            if not request_id:
+                if (
+                    method == "Network.requestWillBeSent"
+                    and params["documentURL"] == self.url
+                ):
+                    request_id = params["requestId"]
+            # Then find the first response corresponding to that URL
+            elif (
+                method == "Network.responseReceived"
+                and params["requestId"] == request_id
+            ):
+                return int(params["response"]["status"])
+
+        return None
 
     @abstractmethod
     def get_logger_name(self) -> str:
