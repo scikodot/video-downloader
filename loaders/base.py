@@ -30,7 +30,7 @@ from loaders.exceptions import (
     MimeTypeNotFoundError,
     QualityNotFoundError,
 )
-from loaders.utils import LimitedResponse
+from loaders.utils import LimitedResponse, LimitedResponseOptions
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -216,7 +216,7 @@ class LoaderBase(metaclass=ABCMeta):
         bytes_count = 0
         for chunk in response.iter_content(
             chunk_size=self.chunk_size,
-            speed_limit=self.speed_limit,
+            options=LimitedResponseOptions(speed_limit=self.speed_limit),
             logger=self.logger,
         ):
             bytes_count += file.write(chunk)
@@ -227,7 +227,7 @@ class LoaderBase(metaclass=ABCMeta):
         with pathlib.Path(path).open("wb") as f:
             for chunk in response.iter_content(
                 chunk_size=self.chunk_size,
-                speed_limit=self.speed_limit,
+                options=LimitedResponseOptions(speed_limit=self.speed_limit),
                 logger=self.logger,
             ):
                 bytes_count += f.write(chunk)

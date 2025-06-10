@@ -401,7 +401,6 @@ class VkVideoLoader(LoaderBase):
         media = None
         for urls_type, urls in types_map.items():
             for url in urls:
-                # TODO: consider getting full file size from Content-Range header
                 response = self._download_resource(session, url)
 
                 mime_type = response.headers.get("Content-Type")

@@ -2,6 +2,7 @@
 
 import time
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from enum import StrEnum, auto
 from logging import Logger
 from typing import Any, Self, TypeVar
@@ -113,6 +114,55 @@ DEFAULT_SEGMENTS_COUNT, MINIMUM_SEGMENTS_COUNT = 1024, 1
 DEFAULT_SLEEP_THRESHOLD, MINIMUM_SLEEP_THRESHOLD = 0.005, 0
 
 
+@dataclass
+class LimitedResponseOptions:
+    """Options used in methods of ``LimitedResponse`` class."""
+
+    speed_limit: float | None = None
+    segments_count: int = DEFAULT_SEGMENTS_COUNT
+    sleep_threshold: float = DEFAULT_SLEEP_THRESHOLD
+
+    def _validate_speed_limit(self) -> None:
+        if self.speed_limit is not None and self.speed_limit <= 0:
+            raise TooSmallValueError(
+                self.speed_limit,
+                lower_bound=0,
+                inclusive=False,
+                units="Mibps",
+            )
+
+    def _validate_segments_count(self) -> None:
+        if (
+            self.segments_count is not None
+            and self.segments_count < MINIMUM_SEGMENTS_COUNT
+        ):
+            raise TooSmallValueError(
+                self.segments_count,
+                lower_bound=MINIMUM_SEGMENTS_COUNT,
+                inclusive=True,
+                units="",
+                indent="",
+            )
+
+    def _validate_sleep_threshold(self) -> None:
+        if (
+            self.sleep_threshold is not None
+            and self.sleep_threshold < MINIMUM_SLEEP_THRESHOLD
+        ):
+            raise TooSmallValueError(
+                self.sleep_threshold,
+                lower_bound=MINIMUM_SLEEP_THRESHOLD,
+                inclusive=True,
+                units="second(-s)",
+            )
+
+    def __post_init__(self) -> None:
+        """Post-init validation routine."""
+        self._validate_speed_limit()
+        self._validate_segments_count()
+        self._validate_sleep_threshold()
+
+
 @proxy_attr("response")
 class LimitedResponse(Response):
     """Wrapper class for ``requests.Response``.
@@ -134,41 +184,11 @@ class LimitedResponse(Response):
                 units="byte(-s)",
             )
 
-    def _validate_speed_limit(self, speed_limit: float | None) -> None:
-        if speed_limit is not None and speed_limit <= 0:
-            raise TooSmallValueError(
-                speed_limit,
-                lower_bound=0,
-                inclusive=False,
-                units="Mibps",
-            )
-
-    def _validate_segments_count(self, segments_count: int | None) -> None:
-        if segments_count is not None and segments_count < MINIMUM_SEGMENTS_COUNT:
-            raise TooSmallValueError(
-                segments_count,
-                lower_bound=MINIMUM_SEGMENTS_COUNT,
-                inclusive=True,
-                units="",
-                indent="",
-            )
-
-    def _validate_sleep_threshold(self, sleep_threshold: float | None) -> None:
-        if sleep_threshold is not None and sleep_threshold < MINIMUM_SLEEP_THRESHOLD:
-            raise TooSmallValueError(
-                sleep_threshold,
-                lower_bound=MINIMUM_SLEEP_THRESHOLD,
-                inclusive=True,
-                units="second(-s)",
-            )
-
     def iter_content(
         self,
         chunk_size: int | None = None,
         decode_unicode: bool = False,  # noqa: FBT001, FBT002
-        speed_limit: float | None = None,
-        segments_count: int | None = None,
-        sleep_threshold: float | None = None,
+        options: LimitedResponseOptions | None = None,
         logger: Logger | None = None,
     ) -> Iterator[Any]:
         """Iterate over the response data, same as ``requests.Response.iter_content``.
@@ -178,22 +198,16 @@ class LimitedResponse(Response):
         and hence uses a ``None`` default value to not limit the chunk size
         if the limit is not provided explicitly.
 
-        Other parameters can be used for limiting the download speed.
+        ``options`` parameter can be used for limiting the download speed.
         """
         self._validate_chunk_size(chunk_size)
 
+        if not options:
+            options = LimitedResponseOptions()
+
         # Return the content as-is if no speed limit is provided.
-        if speed_limit is None:
+        if options.speed_limit is None:
             return self.response.iter_content(chunk_size, decode_unicode)
-        self._validate_speed_limit(speed_limit)
-
-        if segments_count is None:
-            segments_count = DEFAULT_SEGMENTS_COUNT
-        self._validate_segments_count(segments_count)
-
-        if sleep_threshold is None:
-            sleep_threshold = DEFAULT_SLEEP_THRESHOLD
-        self._validate_sleep_threshold(sleep_threshold)
 
         # Instead of messing with sockets, let's use a naive approach:
         # 1. Let `r` -- max download speed.
@@ -211,9 +225,9 @@ class LimitedResponse(Response):
         # That is why we call it "amortized".
 
         # Use short names for better readability.
-        r = speed_limit * constants.BYTES_PER_MEBIBIT
-        k = segments_count
-        s = sleep_threshold
+        r = options.speed_limit * constants.BYTES_PER_MEBIBIT
+        k = options.segments_count
+        s = options.sleep_threshold
 
         r0 = int(r // k)  # bytes per segment
         t0 = 1 / k  # segment duration
