@@ -6,7 +6,7 @@ import logging
 import pathlib
 import re
 import tempfile
-from abc import ABCMeta, abstractmethod
+from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime as dt
@@ -81,7 +81,7 @@ class MediaSpec:
     video: ResourceSpec
 
 
-class LoaderBase(metaclass=ABCMeta):
+class LoaderBase(ABC):
     """Base class for video loader classes."""
 
     def __init__(self, driver: WebDriver, **kwargs: Any) -> None:

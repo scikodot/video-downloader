@@ -43,35 +43,6 @@ DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
 
-class CustomArgumentParser(argparse.ArgumentParser):
-    """Custom argument parser that adds extra formatting for help messages."""
-
-    @override
-    def add_argument(self, *args: Any, **kwargs: Any) -> argparse.Action:
-        if "help" in kwargs:
-            kwargs["help"] += "\n \n"
-
-        return super().add_argument(*args, **kwargs)
-
-    @override
-    def _parse_known_args(
-        self,
-        arg_strings: list[str],
-        namespace: argparse.Namespace,
-    ) -> tuple[argparse.Namespace, list[str]]:
-        for arg_string in arg_strings:
-            if (
-                arg_string.startswith("-")
-                and not arg_string.startswith("--")
-                and len(arg_string) > SHORT_ARG_LEN
-            ):
-                for ch in arg_string[1:]:
-                    # TODO: move args declaration to .json
-                    if ch in "orqtu":
-                        raise ArgumentStringError(f"-{ch}", arg_string)
-        return super()._parse_known_args(arg_strings, namespace)
-
-
 def _validate_url(url: str) -> str:
     if not validators.url(url):
         raise UrlValidationError(url)
@@ -179,6 +150,189 @@ def _validate_user_profile(user_profile: str) -> str:
     return user_profile
 
 
+class PositionalArgument:
+    """Positional command-line argument."""
+
+    def __init__(self, name: str, **kwargs: Any) -> None:
+        """Define a new positional command-line argument."""
+        self.name = name
+        self.kwargs = kwargs
+
+
+class OptionalArgument:
+    """Optional command-line argument."""
+
+    def __init__(self, short_name: str, full_name: str, **kwargs: Any) -> None:
+        """Define a new optional command-line argument."""
+        self.short_name = short_name
+        self.full_name = full_name
+        self.kwargs = kwargs
+
+
+class ArgumentsSpec:
+    """Specification of command-line arguments that the program accepts."""
+
+    positional: list[PositionalArgument]
+    optional: list[OptionalArgument]
+    flags: list[OptionalArgument]
+
+    def __init__(self, *args: PositionalArgument | OptionalArgument) -> None:
+        """Define a new command-line arguments specification."""
+        self.positional = []
+        self.optional = []
+        self.flags = []
+        for arg in args:
+            if isinstance(arg, PositionalArgument):
+                self.positional.append(arg)
+            elif isinstance(arg, OptionalArgument):
+                # Flags do not require a value, so they don't have 'type' parameter
+                if "type" in arg.kwargs:
+                    self.optional.append(arg)
+                else:
+                    self.flags.append(arg)
+
+
+ARGSPEC = ArgumentsSpec(
+    PositionalArgument("url", help="Video URL.", type=_validate_url),
+    OptionalArgument(
+        "-h",
+        "--help",
+        help="Show this help message and exit.",
+        action="help",
+        default=argparse.SUPPRESS,
+    ),
+    OptionalArgument(
+        "-o",
+        "--output-path",
+        help=(
+            "Where to put the downloaded video. May be absolute or relative.\n"
+            "If relative, the video will be saved at the specified path "
+            "under the directory the program was run from.\n"
+            f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}/' "
+            "path under the directory the program was run from."
+        ),
+        default=get_default_output_path(),
+        type=_validate_output_path,
+    ),
+    OptionalArgument(
+        "-c",
+        "--chunk-size",
+        help=(
+            "Number of kibibytes (KiBs) to download on every request "
+            "in case of chunked data.\n"
+            "Higher values are advised for longer videos."
+        ),
+        default=DEFAULT_CHUNK_SIZE,
+        type=_validate_chunk_size,
+    ),
+    OptionalArgument(
+        "-s",
+        "--speed-limit",
+        help=(
+            "Maximum connection speed (Mib/s) to establish.\n"
+            "Generally, higher values are preferrable, "
+            "but one must take care of not becoming subject to possible restrictions "
+            "that the server host may impose "
+            "if the client consumes too much traffic at once."
+        ),
+        type=_validate_speed_limit,
+    ),
+    OptionalArgument(
+        "-q",
+        "--quality",
+        help=(
+            f"Which quality the downloaded video must have (e. g. {DEFAULT_QUALITY}).\n"
+            "This parameter determines the exact quality "
+            "if used together with '--strict' flag, and a maximum quality otherwise.\n"
+            "In the latter case, the first quality value lower than or equal "
+            "to this parameter value will be used."
+        ),
+        default=DEFAULT_QUALITY,
+        type=_validate_quality,
+    ),
+    OptionalArgument(
+        "-t",
+        "--timeout",
+        help=(
+            "How many seconds to wait for every operation on the page to complete.\n"
+            "Few tens of seconds is usually enough."
+        ),
+        default=DEFAULT_TIMEOUT,
+        type=_validate_timeout,
+    ),
+    OptionalArgument(
+        "-u",
+        "--user-profile",
+        help=(
+            "Path to the user profile to launch Chrome with.\n"
+            "This must be a combination of both '--user-data-dir' "
+            "and '--profile-directory' arguments supplied to Chrome."
+        ),
+        type=_validate_user_profile,
+    ),
+    OptionalArgument(
+        "-e",
+        "--exact",
+        help=(
+            "Do not load the video in any quality "
+            "if the specified quality is not found."
+        ),
+        action="store_true",
+    ),
+    OptionalArgument(
+        "-w",
+        "--overwrite",
+        help="Overwrite the video file with the same name if it exists.",
+        action="store_true",
+    ),
+    OptionalArgument(
+        "-l",
+        "--headless",
+        help="Run browser in headless mode, i. e. without GUI.",
+        action="store_true",
+    ),
+    OptionalArgument(
+        "-v",
+        "--verbose",
+        help="Show detailed information about performed actions.",
+        action="count",
+        default=0,
+    ),
+)
+
+
+class CustomArgumentParser(argparse.ArgumentParser):
+    """Custom argument parser that adds extra formatting for help messages."""
+
+    @override
+    def add_argument(self, *args: Any, **kwargs: Any) -> argparse.Action:
+        if "help" in kwargs:
+            kwargs["help"] += "\n \n"
+
+        return super().add_argument(*args, **kwargs)
+
+    @override
+    def _parse_known_args(
+        self,
+        arg_strings: list[str],
+        namespace: argparse.Namespace,
+    ) -> tuple[argparse.Namespace, list[str]]:
+        opt_args = {a.short_name[1]: a for a in ARGSPEC.optional}
+        for arg_string in arg_strings:
+            if (
+                arg_string.startswith("-")
+                and not arg_string.startswith("--")
+                and len(arg_string) > SHORT_ARG_LEN
+            ):
+                for ch in arg_string[1:]:
+                    if ch in opt_args:
+                        raise ArgumentStringError(
+                            opt_args[ch].short_name,
+                            arg_string,
+                        )
+        return super()._parse_known_args(arg_strings, namespace)
+
+
 def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
     """Get the corresponding loader class for the specified URL."""
     parsed_url = urlparser.urlparse(url)
@@ -195,122 +349,11 @@ def _parse_args() -> argparse.Namespace:
         add_help=False,
     )
 
-    parser.add_argument("url", help="Video URL.", type=_validate_url)
+    for arg in ARGSPEC.positional:
+        parser.add_argument(arg.name, **arg.kwargs)
 
-    parser.add_argument(
-        "-h",
-        "--help",
-        help="Show this help message and exit.",
-        action="help",
-        default=argparse.SUPPRESS,
-    )
-
-    parser.add_argument(
-        "-o",
-        "--output-path",
-        help=(
-            "Where to put the downloaded video. May be absolute or relative.\n"
-            "If relative, the video will be saved at the specified path "
-            "under the directory the program was run from.\n"
-            f"If omitted, the video will be saved to the '{DEFAULT_OUTPUT_SUBPATH}/' "
-            "path under the directory the program was run from."
-        ),
-        default=get_default_output_path(),
-        type=_validate_output_path,
-    )
-
-    parser.add_argument(
-        "-c",
-        "--chunk-size",
-        help=(
-            "Number of kibibytes (KiBs) to download on every request "
-            "in case of chunked data.\n"
-            "Higher values are advised for longer videos."
-        ),
-        default=DEFAULT_CHUNK_SIZE,
-        type=_validate_chunk_size,
-    )
-
-    parser.add_argument(
-        "-s",
-        "--speed-limit",
-        help=(
-            "Maximum connection speed (Mib/s) to establish.\n"
-            "Generally, higher values are preferrable, "
-            "but one must take care of not becoming subject to possible restrictions "
-            "that the server host may impose "
-            "if the client consumes too much traffic at once."
-        ),
-        type=_validate_speed_limit,
-    )
-
-    parser.add_argument(
-        "-q",
-        "--quality",
-        help=(
-            f"Which quality the downloaded video must have (e. g. {DEFAULT_QUALITY}).\n"
-            "This parameter determines the exact quality "
-            "if used together with '--strict' flag, and a maximum quality otherwise.\n"
-            "In the latter case, the first quality value lower than or equal "
-            "to this parameter value will be used."
-        ),
-        default=DEFAULT_QUALITY,
-        type=_validate_quality,
-    )
-
-    parser.add_argument(
-        "-t",
-        "--timeout",
-        help=(
-            "How many seconds to wait for every operation on the page to complete.\n"
-            "Few tens of seconds is usually enough."
-        ),
-        default=DEFAULT_TIMEOUT,
-        type=_validate_timeout,
-    )
-
-    parser.add_argument(
-        "-u",
-        "--user-profile",
-        help=(
-            "Path to the user profile to launch Chrome with.\n"
-            "This must be a combination of both '--user-data-dir' "
-            "and '--profile-directory' arguments supplied to Chrome."
-        ),
-        type=_validate_user_profile,
-    )
-
-    parser.add_argument(
-        "-e",
-        "--exact",
-        help=(
-            "Do not load the video in any quality "
-            "if the specified quality is not found."
-        ),
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "-w",
-        "--overwrite",
-        help="Overwrite the video file with the same name if it exists.",
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "-l",
-        "--headless",
-        help="Run browser in headless mode, i. e. without GUI.",
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        help="Show detailed information about performed actions.",
-        action="count",
-        default=0,
-    )
+    for arg in ARGSPEC.optional + ARGSPEC.flags:
+        parser.add_argument(arg.short_name, arg.full_name, **arg.kwargs)
 
     return parser.parse_args()
 
