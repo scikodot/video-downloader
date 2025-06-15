@@ -3,13 +3,16 @@
 import argparse
 import logging
 import pathlib
+import sys
 import urllib.parse as urlparser
 from collections.abc import Callable
+from types import TracebackType
 from typing import Any, TypeVar
 
 import validators
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.remote.webdriver import WebDriver
 from typing_extensions import override
 
 from exceptions import (
@@ -342,6 +345,10 @@ def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
     return (parsed_url.netloc, None)
 
 
+def _get_driver_class() -> type[WebDriver]:
+    return webdriver.Chrome
+
+
 def _parse_args() -> argparse.Namespace:
     parser = CustomArgumentParser(
         prog=PROGRAM_NAME,
@@ -358,6 +365,16 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _get_unhandled_logger() -> logging.Logger:
+    logger = logging.getLogger("loaders_unhandled")
+    logger.setLevel(logging.CRITICAL)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    return logger
+
+
 def _get_logger(verbosity: int) -> logging.Logger:
     # Use local package logger
     if verbosity <= MAX_PACKAGE_VERBOSITY:
@@ -365,7 +382,7 @@ def _get_logger(verbosity: int) -> logging.Logger:
         logger.setLevel(VERBOSITY_LEVELS[verbosity])
     # Use root logger that can be used by all packages
     else:
-        logger = logging.getLogger("root")
+        logger = logging.getLogger()
         level = min(verbosity, len(VERBOSITY_LEVELS) - 1)
         logger.setLevel(VERBOSITY_LEVELS[level])
 
@@ -405,6 +422,21 @@ def _get_chrome_options(
 
 def main() -> None:
     """Entry point for the video downloader."""
+    unhandled_logger = _get_unhandled_logger()
+
+    def excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_traceback: TracebackType | None,
+    ) -> None:
+        unhandled_logger.critical(
+            "Unhandled exception has occured.",
+            exc_info=(exc_type, exc_value, exc_traceback),
+        )
+
+    # Use sys.excepthook to log unhandled exceptions
+    sys.excepthook = excepthook
+
     args = _parse_args()
     logger = _get_logger(args.verbose)
 
@@ -420,6 +452,22 @@ def main() -> None:
         logger.info("Exiting...")
         return
 
+    driver_class = _get_driver_class()
+
+    _driver_exit = driver_class.__exit__
+
+    def driver_exit(
+        self: WebDriver,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        logger.info("Closing driver...")
+        _driver_exit(self, exc_type, exc, traceback)
+
+    # Replace the original __exit__ with a logging one
+    driver_class.__exit__ = driver_exit
+
     options = _get_chrome_options(
         user_profile=args.user_profile,
         headless=args.headless,
@@ -432,15 +480,11 @@ def main() -> None:
                 loader = loader_class(driver=driver, **vars(args))
                 logger.info("Navigating to %s...", args.url)
                 loader.get(args.url)
-            # TODO: also log all uncaught exceptions, via sys.excepthook or similar
             except FileExistsNoOverwriteError:
                 logger.exception(
                     "Cannot save the video to the already existing file. "
-                    "Use '--overwrite' argument to be able to overwrite "
-                    "the existing file.",
+                    "Use '--overwrite' argument to be able to overwrite it.",
                 )
-
-            logger.info("Closing driver...")
     except WebDriverException:
         logger.exception("Driver error has occured.")
 
