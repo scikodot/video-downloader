@@ -2,6 +2,7 @@
 
 import pathlib
 import urllib.parse as urlparser
+from abc import abstractmethod
 from collections.abc import Iterable, Mapping
 from typing import Literal, final
 
@@ -42,153 +43,17 @@ MPD_QUALITIES = {
 }
 
 
-@final
-class VkVideoLoader(LoaderBase):
-    """Video loader for vkvideo.ru."""
+class VkLoader(LoaderBase):
+    """Base class for VK ecosystem."""
 
     @override
     def get_logger_name(self) -> str:
         return __name__
 
-    @override
-    def get_source_url(self) -> str | None:
-        # Locate <source> element
-        try:
-            source = self.driver.find_element(By.CSS_SELECTOR, "video > source")
-        except NoSuchElementException:
-            # OK.ru
-            try:
-                wrapper = self.driver.find_element(
-                    By.CSS_SELECTOR,
-                    "vk-video-player > div > div",
-                )
-                self.logger.debug("Wrapper: %s", wrapper)
-                shadow = wrapper.shadow_root
-                self.logger.debug("Shadow: %s", shadow)
-                source = shadow.find_element(By.CSS_SELECTOR, "video > source")
-            except NoSuchElementException:
-                return None
-
-        src = source.get_attribute("src")
-        if not src:
-            return None
-
-        return src.removeprefix("blob:")
-
-    @override
-    def check_restrictions(self) -> str | None:
-        # The video is only available for registered users and/or subscribers
-        try:
-            placeholder = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "div[data-testid='placeholder_description']",
-            )
-            return placeholder.get_attribute("innerText")
-        except NoSuchElementException:
-            pass
-
-        # The video is blocked in the current geolocation
-        status_code = self._get_status_code()
-        if status_code == HTTP_BLOCKED:
-            try:
-                body = self.driver.find_element(By.CSS_SELECTOR, "body")
-                return body.get_attribute("innerText")
-            except NoSuchElementException:
-                return HTTP_BLOCKED_NAME
-
-        return None
-
-    @override
-    def disable_autoplay(self) -> None:
-        autoplay = WebDriverWait(self.driver, self.timeout).until(
-            ec.element_to_be_clickable(
-                (By.CSS_SELECTOR, "div[class~='videoplayer_btn_autoplay']"),
-            ),
-        )
-        if autoplay.get_attribute("data-value-checked") == "true":
-            autoplay.click()
-
-    @override
-    def get_title(self) -> str | None:
-        title = WebDriverWait(self.driver, self.timeout).until(
-            ec.visibility_of_element_located(
-                (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
-            ),
-        )
-        return title.get_attribute("innerText")
-
-    @override
-    def get_qualities(self) -> set[int]:
-        return {480}
-
-        # Click the 'Settings' button
-        self.logger.info("Waiting for Settings button to appear...")
-        (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"),
-                ),
-            )
-            .click()
-        )
-
-        # Click the 'Quality' menu option
-        self.logger.info("Waiting for Quality menu option to appear...")
-        (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (
-                        By.CSS_SELECTOR,
-                        "div[class~='videoplayer_settings_menu_list_item_quality']",
-                    ),
-                ),
-            )
-            .click()
-        )
-
-        # Get the list of available qualities
-        self.logger.info("Waiting for quality options to appear...")
-        quality_items = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (
-                        By.CSS_SELECTOR,
-                        "div[class~='videoplayer_settings_menu_sublist_item']",
-                    ),
-                ),
-            )
-            .find_element(By.XPATH, "./..")
-            .find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
-        )
-
-        # Filter out the 'Auto' option with value of -1
-        quality_values = (qi.get_attribute("data-value") for qi in quality_items)
-        qualities = (int(qv) for qv in quality_values if qv)
-        return {q for q in qualities if q > 0}
-
-    def _replay(self) -> None:
-        # Here, we first check if the video has ended,
-        # and then locate the replay button to click on it.
-        try:
-            video_ui = self.driver.find_element(
-                By.CSS_SELECTOR,
-                "div[class='videoplayer_ui']",
-            )
-            video_state = video_ui.get_attribute("data-state")
-            if video_state == "ended":
-                try:
-                    replay_button = video_ui.find_element(
-                        By.CSS_SELECTOR,
-                        "div[class~='videoplayer_btn_play']",
-                    )
-                    replay_button.click()
-                except NoSuchElementException:
-                    self.logger.exception("Could not locate replay button to click.")
-        except NoSuchElementException:
-            self.logger.exception("Could not locate video UI element.")
+    @abstractmethod
+    def replay(self) -> None:
+        """Replay the video."""
+        ...
 
     def _get_urls_from_network_logs(
         self,
@@ -238,7 +103,7 @@ class VkVideoLoader(LoaderBase):
         # If there was not enough URLs, try to replay the video.
         # If the video is too short, not all URLs may get requested on the first play.
         # The replay enables sending the absent URLs requests once again.
-        self._replay()
+        self.replay()
         return False
 
     def _get_urls_by_bytes(self, url: str) -> Iterable[tuple[str, int | None]]:
@@ -493,3 +358,181 @@ class VkVideoLoader(LoaderBase):
             return self._get_media_from_types_map(res, session, directory)
 
         raise TypeError(type(res).__name__)
+
+
+@final
+class VkVideoLoader(VkLoader):
+    """Video loader for vkvideo.ru."""
+
+    @override
+    def get_source_url(self) -> str | None:
+        try:
+            source = self.driver.find_element(By.CSS_SELECTOR, "video > source")
+        except NoSuchElementException:
+            return None
+
+        src = source.get_attribute("src")
+        if not src:
+            return None
+
+        return src.removeprefix("blob:")
+
+    @override
+    def check_restrictions(self) -> str | None:
+        # The video is only available for registered users and/or subscribers
+        try:
+            placeholder = self.driver.find_element(
+                By.CSS_SELECTOR,
+                "div[data-testid='placeholder_description']",
+            )
+            return placeholder.get_attribute("innerText")
+        except NoSuchElementException:
+            pass
+
+        # The video is blocked in the current geolocation
+        status_code = self._get_status_code()
+        if status_code == HTTP_BLOCKED:
+            try:
+                body = self.driver.find_element(By.CSS_SELECTOR, "body")
+                return body.get_attribute("innerText")
+            except NoSuchElementException:
+                return HTTP_BLOCKED_NAME
+
+        return None
+
+    @override
+    def disable_autoplay(self) -> None:
+        autoplay = WebDriverWait(self.driver, self.timeout).until(
+            ec.element_to_be_clickable(
+                (By.CSS_SELECTOR, "div[class~='videoplayer_btn_autoplay']"),
+            ),
+        )
+        if autoplay.get_attribute("data-value-checked") == "true":
+            autoplay.click()
+
+    @override
+    def get_title(self) -> str | None:
+        title = WebDriverWait(self.driver, self.timeout).until(
+            ec.visibility_of_element_located(
+                (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
+            ),
+        )
+        return title.get_attribute("innerText")
+
+    @override
+    def get_qualities(self) -> set[int]:
+        # Click the 'Settings' button
+        self.logger.info("Waiting for Settings button to appear...")
+        (
+            WebDriverWait(self.driver, self.timeout)
+            .until(
+                ec.element_to_be_clickable(
+                    (By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"),
+                ),
+            )
+            .click()
+        )
+
+        # Click the 'Quality' menu option
+        self.logger.info("Waiting for Quality menu option to appear...")
+        (
+            WebDriverWait(self.driver, self.timeout)
+            .until(
+                ec.element_to_be_clickable(
+                    (
+                        By.CSS_SELECTOR,
+                        "div[class~='videoplayer_settings_menu_list_item_quality']",
+                    ),
+                ),
+            )
+            .click()
+        )
+
+        # Get the list of available qualities
+        self.logger.info("Waiting for quality options to appear...")
+        quality_items = (
+            WebDriverWait(self.driver, self.timeout)
+            .until(
+                ec.element_to_be_clickable(
+                    (
+                        By.CSS_SELECTOR,
+                        "div[class~='videoplayer_settings_menu_sublist_item']",
+                    ),
+                ),
+            )
+            .find_element(By.XPATH, "./..")
+            .find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
+        )
+
+        # Filter out the 'Auto' option with value of -1
+        quality_values = (qi.get_attribute("data-value") for qi in quality_items)
+        qualities = (int(qv) for qv in quality_values if qv)
+        return {q for q in qualities if q > 0}
+
+    @override
+    def replay(self) -> None:
+        # Here, we first check if the video has ended,
+        # and then locate the replay button to click on it.
+        try:
+            video_ui = self.driver.find_element(
+                By.CSS_SELECTOR,
+                "div[class='videoplayer_ui']",
+            )
+            video_state = video_ui.get_attribute("data-state")
+            if video_state == "ended":
+                try:
+                    replay_button = video_ui.find_element(
+                        By.CSS_SELECTOR,
+                        "div[class~='videoplayer_btn_play']",
+                    )
+                    replay_button.click()
+                except NoSuchElementException:
+                    self.logger.exception("Could not locate replay button to click.")
+        except NoSuchElementException:
+            self.logger.exception("Could not locate video UI element.")
+
+
+@final
+class OkLoader(VkLoader):
+    """Video loader for ok.ru."""
+
+    @override
+    def get_source_url(self) -> str | None:
+        # OK.ru
+        try:
+            wrapper = self.driver.find_element(
+                By.CSS_SELECTOR,
+                "vk-video-player > div > div",
+            )
+            self.logger.debug("Wrapper: %s", wrapper)
+            shadow = wrapper.shadow_root
+            self.logger.debug("Shadow: %s", shadow)
+            source = shadow.find_element(By.CSS_SELECTOR, "video > source")
+        except NoSuchElementException:
+            return None
+
+        src = source.get_attribute("src")
+        if not src:
+            return None
+
+        return src.removeprefix("blob:")
+
+    @override
+    def check_restrictions(self) -> str | None:
+        raise NotImplementedError
+
+    @override
+    def disable_autoplay(self) -> None:
+        raise NotImplementedError
+
+    @override
+    def get_title(self) -> str | None:
+        raise NotImplementedError
+
+    @override
+    def get_qualities(self) -> set[int]:
+        raise NotImplementedError
+
+    @override
+    def replay(self) -> None:
+        raise NotImplementedError
