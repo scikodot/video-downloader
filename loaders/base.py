@@ -6,6 +6,7 @@ import logging
 import pathlib
 import re
 import tempfile
+import urllib.parse as urlparser
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -26,9 +27,11 @@ from loaders.exceptions import (
     FileExistsNoOverwriteError,
     InvalidMimeTypeError,
     InvalidMpdError,
+    LoaderNotFoundError,
     MediaNotFoundError,
     MimeTypeNotFoundError,
     QualityNotFoundError,
+    VideoSourceNotFoundError,
 )
 from loaders.utils import LimitedResponse, LimitedResponseOptions
 
@@ -87,6 +90,11 @@ class LoaderBase(ABC):
     def __init__(self, driver: WebDriver, **kwargs: Any) -> None:
         """Create a new instance of the loader class."""
         try:
+            self.driver = driver
+
+            # Store kwargs for a potential redirect.
+            self._kwargs = kwargs
+
             self.url = kwargs["url"]
             self.output_path = pathlib.Path(kwargs["output_path"])
             self.chunk_size = kwargs["chunk_size"]
@@ -95,7 +103,6 @@ class LoaderBase(ABC):
             self.timeout = kwargs["timeout"]
             self.exact = kwargs["exact"]
             self.overwrite = kwargs["overwrite"]
-            self.driver = driver
             self.logger = logging.getLogger(self.get_logger_name())
 
             self._ensure_no_file_or_can_overwrite()
@@ -371,6 +378,11 @@ class LoaderBase(ABC):
         ...
 
     @abstractmethod
+    def get_source_url(self) -> str | None:
+        """Get the URL of the ``<video>`` HTML tag."""
+        ...
+
+    @abstractmethod
     def check_restrictions(self) -> str | None:
         """Check whether the video is available.
 
@@ -456,6 +468,28 @@ class LoaderBase(ABC):
 
         return False
 
+    def _check_redirect(self) -> None:
+        source_url = self.get_source_url()
+        self.logger.debug("Source URL: %s", source_url)
+        if not source_url:
+            raise VideoSourceNotFoundError
+
+        url_parsed = urlparser.urlparse(self.url)
+        source_url_parsed = urlparser.urlparse(source_url)
+        if url_parsed.netloc != source_url_parsed.netloc:
+            self.logger.warning("Redirecting to the video source at %s...", source_url)
+            self._redirect(source_url)
+
+    def _redirect(self, url: str) -> None:
+        from loaders import get_loader_class
+
+        netloc, loader_class = get_loader_class(url)
+        if not loader_class:
+            raise LoaderNotFoundError(netloc)
+
+        loader = loader_class(driver=self.driver, **self._kwargs)
+        loader.get(url)
+
     def _try_disable_autoplay(self) -> None:
         try:
             self.disable_autoplay()
@@ -505,6 +539,7 @@ class LoaderBase(ABC):
         if not self._try_ensure_all():
             return
 
+        self._check_redirect()
         self._try_disable_autoplay()
 
         if not self._try_get_target_quality():

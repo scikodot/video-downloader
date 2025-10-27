@@ -8,6 +8,14 @@ from exceptions import ParameterizedError
 from loaders.utils import MediaType
 
 
+class LoaderNotFoundError(Exception):
+    """Thrown when no loader could be found for the given URL."""
+
+
+class VideoSourceNotFoundError(Exception):
+    """Thrown when the video source URL could not be found."""
+
+
 class QualityNotFoundError(Exception):
     """Thrown when the quality value cannot be found and ``--exact`` flag is used."""
 

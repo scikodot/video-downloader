@@ -3,7 +3,7 @@
 import pathlib
 import urllib.parse as urlparser
 from collections.abc import Iterable, Mapping
-from typing import Literal
+from typing import Literal, final
 
 import requests
 from lxml import etree
@@ -42,12 +42,38 @@ MPD_QUALITIES = {
 }
 
 
+@final
 class VkVideoLoader(LoaderBase):
     """Video loader for vkvideo.ru."""
 
     @override
     def get_logger_name(self) -> str:
         return __name__
+
+    @override
+    def get_source_url(self) -> str | None:
+        # Locate <source> element
+        try:
+            source = self.driver.find_element(By.CSS_SELECTOR, "video > source")
+        except NoSuchElementException:
+            # OK.ru
+            try:
+                wrapper = self.driver.find_element(
+                    By.CSS_SELECTOR,
+                    "vk-video-player > div > div",
+                )
+                self.logger.debug("Wrapper: %s", wrapper)
+                shadow = wrapper.shadow_root
+                self.logger.debug("Shadow: %s", shadow)
+                source = shadow.find_element(By.CSS_SELECTOR, "video > source")
+            except NoSuchElementException:
+                return None
+
+        src = source.get_attribute("src")
+        if not src:
+            return None
+
+        return src.removeprefix("blob:")
 
     @override
     def check_restrictions(self) -> str | None:
@@ -93,6 +119,8 @@ class VkVideoLoader(LoaderBase):
 
     @override
     def get_qualities(self) -> set[int]:
+        return {480}
+
         # Click the 'Settings' button
         self.logger.info("Waiting for Settings button to appear...")
         (

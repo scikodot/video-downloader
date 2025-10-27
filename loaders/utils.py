@@ -11,11 +11,10 @@ from lxml import etree
 from requests import Response
 from typing_extensions import override
 
-# Import whole module instead of specific exceptions.
-# Otherwise it would cause a circular import error,
-# as this module is referenced by exceptions' module.
 import constants
 from exceptions import TooSmallValueError
+
+# Import whole module instead of specific exceptions to prevent circular import error.
 from loaders import exceptions
 
 
@@ -207,7 +206,10 @@ class LimitedResponse(Response):
 
         # Return the content as-is if no speed limit is provided.
         if options.speed_limit is None:
-            return self.response.iter_content(chunk_size, decode_unicode)
+            yield from self.response.iter_content(chunk_size, decode_unicode)
+            # TODO: generator return values are discarded, but Ruff does not detect that
+            # Ex: return 'a' <-- 'a' is discarded, but this does not throw a warning
+            return
 
         # Instead of messing with sockets, let's use a naive approach:
         # 1. Let `r` -- max download speed.

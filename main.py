@@ -4,7 +4,6 @@ import argparse
 import logging
 import pathlib
 import sys
-import urllib.parse as urlparser
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, TypeVar
@@ -22,9 +21,8 @@ from exceptions import (
     TooSmallValueError,
     UrlValidationError,
 )
-from loaders.base import LoaderBase
+from loaders import get_loader_class
 from loaders.exceptions import FileExistsNoOverwriteError
-from loaders.vk import VkVideoLoader
 
 PROGRAM_NAME = "video-downloader"
 
@@ -246,7 +244,7 @@ ARGSPEC = ArgumentsSpec(
         help=(
             f"Which quality the downloaded video must have (e. g. {DEFAULT_QUALITY}).\n"
             "This parameter determines the exact quality "
-            "if used together with '--strict' flag, and a maximum quality otherwise.\n"
+            "if used together with '--exact' flag, and a maximum quality otherwise.\n"
             "In the latter case, the first quality value lower than or equal "
             "to this parameter value will be used."
         ),
@@ -334,15 +332,6 @@ class CustomArgumentParser(argparse.ArgumentParser):
                             arg_string,
                         )
         return super()._parse_known_args(arg_strings, namespace)
-
-
-def get_loader_class(url: str) -> tuple[str, type[LoaderBase] | None]:
-    """Get the corresponding loader class for the specified URL."""
-    parsed_url = urlparser.urlparse(url)
-    if parsed_url.netloc.endswith("vkvideo.ru"):
-        return (parsed_url.netloc, VkVideoLoader)
-
-    return (parsed_url.netloc, None)
 
 
 def _get_driver_class() -> type[WebDriver]:
