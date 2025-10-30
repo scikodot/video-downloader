@@ -378,6 +378,11 @@ class LoaderBase(ABC):
         ...
 
     @abstractmethod
+    def get_playlist(self) -> list[str] | None:
+        """Get a list of video URLs from the given playlist."""
+        ...
+
+    @abstractmethod
     def get_source_url(self) -> str | None:
         """Get the URL of the ``<video>`` HTML tag."""
         ...
@@ -532,9 +537,21 @@ class LoaderBase(ABC):
         except DownloadRequestError:
             self.logger.exception("Could not download files due to a request error.")
 
-    def get(self, url: str) -> None:
+    def get(self, url: str, *, check_playlist: bool = True) -> None:
         """Navigate to ``url``, locate the video and load it."""
         self.driver.get(url)
+
+        # URL points to a playlist -> download all videos.
+        if check_playlist and (playlist := self.get_playlist()):
+            self.logger.info("Found a playlist of %s videos.", len(playlist))
+            for video_url in playlist:
+                self.logger.info("Navigating to %s...", video_url)
+
+                # Update URL and skip subsequent playlist checks.
+                self.url = video_url
+                self.get(video_url, check_playlist=False)
+
+            return
 
         if not self._try_ensure_all():
             return
