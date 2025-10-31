@@ -373,30 +373,30 @@ class VkVideoLoader(VkLoader):
                 By.CSS_SELECTOR,
                 "div[id='video_all_list']",
             )
-            videos = video_list.find_elements(By.CSS_SELECTOR, "div[id^='video_item_']")
-            res, i = [], 1
-            for v in videos:
-                try:
-                    a = v.find_element(By.CSS_SELECTOR, "a")
-                    href = a.get_attribute("href")
-                    if not href:
-                        self.logger.debug(
-                            "Could not find 'href' attribute for video #{i}.",
-                        )
-                        continue
-
-                    res.append(self.domain_url + href)
-
-                except NoSuchElementException:
-                    self.logger.debug(
-                        "Could not find subelement of type 'a' for video #{i}.",
-                    )
-
-                i += 1
-
         except NoSuchElementException:
             self.logger.info("Could not find a playlist.")
             return None
+
+        videos = video_list.find_elements(By.CSS_SELECTOR, "div[id^='video_item_']")
+        res, i = [], 1
+        for v in videos:
+            try:
+                a = v.find_element(By.CSS_SELECTOR, "a")
+                href = a.get_attribute("href")
+                if not href:
+                    self.logger.debug(
+                        "Could not find 'href' attribute for video #{i}.",
+                    )
+                    continue
+
+                res.append(self.domain_url + href)
+
+            except NoSuchElementException:
+                self.logger.debug(
+                    "Could not find subelement of type 'a' for video #{i}.",
+                )
+
+            i += 1
 
         return res
 

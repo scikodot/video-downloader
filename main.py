@@ -380,25 +380,9 @@ def _get_log_file_handler() -> logging.Handler:
     return handler
 
 
-def _get_unhandled_logger() -> logging.Logger:
-    logger = logging.getLogger("loaders_unhandled")
-    logger.setLevel(logging.CRITICAL)
-    logger.addHandler(_get_log_console_handler())
-    logger.addHandler(_get_log_file_handler())
-    return logger
-
-
-def _get_logger(verbosity: int) -> logging.Logger:
-    # Use local package logger
-    if verbosity <= MAX_PACKAGE_VERBOSITY:
-        logger = logging.getLogger("loaders")
-        logger.setLevel(VERBOSITY_LEVELS[verbosity])
-    # Use root logger that can be used by all packages
-    else:
-        logger = logging.getLogger()
-        level = min(verbosity, len(VERBOSITY_LEVELS) - 1)
-        logger.setLevel(VERBOSITY_LEVELS[level])
-
+def _get_logger(name: str | None = None) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(VERBOSITY_LEVELS[0])
     logger.addHandler(_get_log_console_handler())
     logger.addHandler(_get_log_file_handler())
     return logger
@@ -433,14 +417,14 @@ def _get_chrome_options(
 
 def main() -> None:
     """Entry point for the video downloader."""
-    unhandled_logger = _get_unhandled_logger()
+    local_logger = _get_logger("loaders")
 
     def excepthook(
         exc_type: type[BaseException],
         exc_value: BaseException,
         exc_traceback: TracebackType | None,
     ) -> None:
-        unhandled_logger.critical(
+        local_logger.critical(
             "An unhandled exception has occured.",
             exc_info=(exc_type, exc_value, exc_traceback),
         )
@@ -449,7 +433,17 @@ def main() -> None:
     sys.excepthook = excepthook
 
     args = _parse_args()
-    logger = _get_logger(args.verbose)
+
+    # Use local package logger
+    if args.verbosity <= MAX_PACKAGE_VERBOSITY:
+        logger = local_logger
+        logger.setLevel(VERBOSITY_LEVELS[args.verbosity])
+
+    # Use root logger that can be used by all packages
+    else:
+        logger = _get_logger()
+        level = min(args.verbosity, len(VERBOSITY_LEVELS) - 1)
+        logger.setLevel(VERBOSITY_LEVELS[level])
 
     logger.debug("Args: %s", vars(args))
 
