@@ -1,8 +1,10 @@
 """Various utilities for loaders."""
 
+import datetime
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from datetime import datetime as dt
 from enum import StrEnum, auto
 from logging import Logger
 from typing import Any, Self, TypeVar
@@ -16,6 +18,11 @@ from exceptions import TooSmallValueError
 
 # Import whole module instead of specific exceptions to prevent circular import error.
 from loaders import exceptions
+
+
+def get_current_timestamp() -> str:
+    """Return the current timestamp as a string."""
+    return dt.now(datetime.UTC).strftime(constants.DATETIME_FORMAT)
 
 
 class MediaType(StrEnum):

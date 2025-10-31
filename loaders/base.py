@@ -1,6 +1,5 @@
 """Contains base functionality for loading videos."""
 
-import datetime
 import json
 import logging
 import pathlib
@@ -10,7 +9,6 @@ import urllib.parse as urlparser
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime as dt
 from io import BufferedWriter
 from typing import Any
 
@@ -33,7 +31,7 @@ from loaders.exceptions import (
     QualityNotFoundError,
     VideoSourceNotFoundError,
 )
-from loaders.utils import LimitedResponse, LimitedResponseOptions
+from loaders.utils import LimitedResponse, LimitedResponseOptions, get_current_timestamp
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -248,7 +246,7 @@ class LoaderBase(ABC):
             raise AccessRestrictedError(access_restricted_msg)
 
     def _get_title_with_timestamp(self, prefix: str) -> str:
-        timestamp = dt.now(datetime.UTC).strftime("%Y%m%d%H%M%S")
+        timestamp = get_current_timestamp()
         return f"{prefix}_{timestamp}"
 
     def _format_title(self, title: str) -> str:

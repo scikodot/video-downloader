@@ -16,13 +16,13 @@ from typing_extensions import override
 
 from exceptions import (
     ArgumentStringError,
-    ExceptionFormatter,
     PathNotFoundError,
     TooSmallValueError,
     UrlValidationError,
 )
 from loaders import get_loader_class
 from loaders.exceptions import FileExistsNoOverwriteError
+from loaders.utils import get_current_timestamp
 
 PROGRAM_NAME = "video-downloader"
 
@@ -38,6 +38,7 @@ VERBOSITY_LEVELS = {
     4: "DEBUG",
 }
 
+LOGS_SUBPATH = "logs"
 DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_CHUNK_SIZE, MINIMUM_CHUNK_SIZE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
@@ -51,10 +52,19 @@ def _validate_url(url: str) -> str:
     return url
 
 
+def get_root_path() -> pathlib.Path:
+    """Get the current file path."""
+    return pathlib.Path(__file__).parent.resolve()
+
+
+def get_logs_path() -> pathlib.Path:
+    """Get the path to the logs."""
+    return get_root_path() / LOGS_SUBPATH
+
+
 def get_default_output_path() -> pathlib.Path:
     """Get the default output path for downloaded videos."""
-    directory = pathlib.Path(__file__).parent.resolve()
-    return directory / DEFAULT_OUTPUT_SUBPATH
+    return get_root_path() / DEFAULT_OUTPUT_SUBPATH
 
 
 def _validate_output_path(output_path: str) -> str:
@@ -354,13 +364,27 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+_log_timestamp = get_current_timestamp()
+_log_formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _get_log_console_handler() -> logging.Handler:
+    handler = logging.StreamHandler()
+    handler.setFormatter(_log_formatter)
+    return handler
+
+
+def _get_log_file_handler() -> logging.Handler:
+    handler = logging.FileHandler(get_logs_path() / f"log_{_log_timestamp}.txt")
+    handler.setFormatter(_log_formatter)
+    return handler
+
+
 def _get_unhandled_logger() -> logging.Logger:
     logger = logging.getLogger("loaders_unhandled")
     logger.setLevel(logging.CRITICAL)
-    handler = logging.StreamHandler()
-    formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    logger.addHandler(_get_log_console_handler())
+    logger.addHandler(_get_log_file_handler())
     return logger
 
 
@@ -375,10 +399,8 @@ def _get_logger(verbosity: int) -> logging.Logger:
         level = min(verbosity, len(VERBOSITY_LEVELS) - 1)
         logger.setLevel(VERBOSITY_LEVELS[level])
 
-    handler = logging.StreamHandler()
-    formatter = ExceptionFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    logger.addHandler(_get_log_console_handler())
+    logger.addHandler(_get_log_file_handler())
     return logger
 
 
@@ -419,7 +441,7 @@ def main() -> None:
         exc_traceback: TracebackType | None,
     ) -> None:
         unhandled_logger.critical(
-            "Unhandled exception has occured.",
+            "An unhandled exception has occured.",
             exc_info=(exc_type, exc_value, exc_traceback),
         )
 
