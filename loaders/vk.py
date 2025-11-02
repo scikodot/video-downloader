@@ -317,7 +317,7 @@ class VkLoader(LoaderBase):
                     # Don't check duration, as it may not be recognized
                     # for incomplete files.
                     infos = ffmpeg_parse_infos(str(path), check_duration=False)
-                    self.logger.debug("Infos: %s", infos)
+                    self.logger.debug("FFMPEG infos: %s", infos)
 
                     # Here, we take the minimum of width and height to also handle
                     # non-standard aspect ratios.

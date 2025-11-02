@@ -16,6 +16,7 @@ import moviepy
 import moviepy.tools
 import requests
 from moviepy import AudioFileClip, VideoFileClip
+from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import TimeoutException
 from selenium.webdriver.remote.webdriver import WebDriver
 
@@ -440,6 +441,13 @@ class LoaderBase(ABC):
                 AudioFileClip(media.audio.target) as audio,
                 VideoFileClip(media.video.target) as video,
             ):
+                infos = (
+                    video.reader.infos
+                    if video.reader
+                    else ffmpeg_parse_infos(media.video.target)
+                )
+                self.logger.info("FFMPEG infos: %s", infos)
+
                 video_with_audio = video.with_audio(audio)
                 output_path = self.output_path
                 try:
