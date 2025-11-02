@@ -419,6 +419,9 @@ def main() -> None:
     """Entry point for the video downloader."""
     local_logger = _get_logger("loaders")
 
+    # Ensure logs directory exists
+    pathlib.Path.mkdir(get_logs_path(), parents=True, exist_ok=True)
+
     def excepthook(
         exc_type: type[BaseException],
         exc_value: BaseException,
