@@ -218,7 +218,7 @@ class VkLoader(LoaderBase):
         segtime = segtemp.find("SegmentTimeline")
         for s in segtime.findall("S"):
             count += 1
-            if r := s.get("r"):
+            if r := s.sget("r"):
                 count += int(r)
         self.logger.debug("Segments count: %s", count)
 

@@ -1,10 +1,9 @@
 """Various utilities for loaders."""
 
-import datetime
+import datetime as dt
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from datetime import datetime as dt
 from enum import StrEnum, auto
 from logging import Logger
 from typing import Any, Self, TypeVar
@@ -21,8 +20,8 @@ from loaders import exceptions
 
 
 def get_current_timestamp() -> str:
-    """Return the current timestamp as a string."""
-    return dt.now(datetime.UTC).strftime(constants.DATETIME_FORMAT)
+    """Return the current timestamp (local timezone) as a string."""
+    return dt.datetime.now(dt.UTC).astimezone().strftime(constants.DATETIME_FORMAT)
 
 
 class MediaType(StrEnum):
@@ -89,6 +88,10 @@ class MpdElement(etree._Element):  # noqa: SLF001
 
     @override
     def find(self, path, namespaces=None) -> "MpdElement":  # noqa: ANN001
+        """Find a matching subelement.
+
+        This method raises an exception if no element was found for the given path.
+        """
         res = self.element.find(path, namespaces)
         if res is None:
             raise exceptions.InvalidMpdError
@@ -97,22 +100,36 @@ class MpdElement(etree._Element):  # noqa: SLF001
     # Ignore override typing; base method returns
     # a specific type (list[etree._Element], which is invariant)
     # instead of a more general one, hence no opportunity for typesafe subtyping.
-    @override
     def findall(self, path, namespaces=None) -> "list[MpdElement]":  # type: ignore[override] # noqa: ANN001
+        """Find all matching subelements, by tag name or path.
+
+        This method raises an exception if no elements were found for the given path.
+        """
         res = self.element.findall(path, namespaces)
         if not res:
             raise exceptions.InvalidMpdError
         return [MpdElement(elem) for elem in res]
 
     # Ignore override typing; base methods are @overload'ed,
-    # @override cannot determine the right version,
-    # and overriding the base implementation (with 'default' param) is unnecessary.
-    @override
-    def get(self, key) -> str:  # type: ignore[override]  # noqa: ANN001
+    # @override cannot determine the right version.
+    def get(self, key: str) -> str:  # type: ignore[override]
+        """Get an element attribute.
+
+        This method raises an ``InvalidMpdError``
+        if no attribute was found for the given key.
+        """
         res = self.element.get(key)
         if not res:
             raise exceptions.InvalidMpdError
         return res
+
+    # Safe get version
+    def sget(self, key: str) -> str | None:
+        """Get an element attribute.
+
+        This method returns ``None`` if no attribute was found for the given key.
+        """
+        return self.element.get(key)
 
 
 MINIMUM_CHUNK_SIZE = 1

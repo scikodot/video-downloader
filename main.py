@@ -375,7 +375,10 @@ def _get_log_console_handler() -> logging.Handler:
 
 
 def _get_log_file_handler() -> logging.Handler:
-    handler = logging.FileHandler(get_logs_path() / f"log_{_log_timestamp}.txt")
+    handler = logging.FileHandler(
+        get_logs_path() / f"log_{_log_timestamp}.txt",
+        delay=True,
+    )
     handler.setFormatter(_log_formatter)
     return handler
 
@@ -438,14 +441,14 @@ def main() -> None:
     args = _parse_args()
 
     # Use local package logger
-    if args.verbosity <= MAX_PACKAGE_VERBOSITY:
+    if args.verbose <= MAX_PACKAGE_VERBOSITY:
         logger = local_logger
-        logger.setLevel(VERBOSITY_LEVELS[args.verbosity])
+        logger.setLevel(VERBOSITY_LEVELS[args.verbose])
 
     # Use root logger that can be used by all packages
     else:
         logger = _get_logger()
-        level = min(args.verbosity, len(VERBOSITY_LEVELS) - 1)
+        level = min(args.verbose, len(VERBOSITY_LEVELS) - 1)
         logger.setLevel(VERBOSITY_LEVELS[level])
 
     logger.debug("Args: %s", vars(args))

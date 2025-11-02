@@ -173,3 +173,6 @@ cython_debug/
 # ~~~LOCALS~~~
 # Default video output folder
 output/
+
+# Logs folder
+logs/
