@@ -367,7 +367,7 @@ class VkVideoLoader(VkLoader):
     domain_url: str = "vkvideo.ru"
 
     @override
-    def get_playlist(self) -> list[str] | None:
+    def get_playlist_contents(self) -> list[str] | None:
         try:
             video_list = self.driver.find_element(
                 By.CSS_SELECTOR,
@@ -533,7 +533,7 @@ class OkLoader(VkLoader):
     """Video loader for ok.ru."""
 
     @override
-    def get_playlist(self) -> list[str] | None:
+    def get_playlist_contents(self) -> list[str] | None:
         raise NotImplementedError
 
     @override

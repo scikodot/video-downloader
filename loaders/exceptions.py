@@ -12,6 +12,10 @@ class LoaderNotFoundError(Exception):
     """Thrown when no loader could be found for the given URL."""
 
 
+class PlaylistNotFoundError(Exception):
+    """Thrown when the playlist could not be found at the given URL."""
+
+
 class VideoSourceNotFoundError(Exception):
     """Thrown when the video source URL could not be found."""
 

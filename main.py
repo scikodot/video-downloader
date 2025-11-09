@@ -283,6 +283,15 @@ ARGSPEC = ArgumentsSpec(
         type=_validate_user_profile,
     ),
     OptionalArgument(
+        "-p",
+        "--playlist",
+        help=(
+            "Indicates that the URL is expected to contain a playlist, "
+            "instead of a single video, that needs to be downloaded."
+        ),
+        action="store_true",
+    ),
+    OptionalArgument(
         "-e",
         "--exact",
         help=(
@@ -294,7 +303,13 @@ ARGSPEC = ArgumentsSpec(
     OptionalArgument(
         "-w",
         "--overwrite",
-        help="Overwrite the video file with the same name if it exists.",
+        help=(
+            "Overwrite the video file with the same name if it exists.\n"
+            "If the output path is an existing file and '--playlist' is used, "
+            "replace the file with an empty directory having the same name.\n"
+            "If the output path is an existing directory and '--playlist' is used, "
+            "overwrite any file with the same name inside of it if necessary.\n"
+        ),
         action="store_true",
     ),
     OptionalArgument(

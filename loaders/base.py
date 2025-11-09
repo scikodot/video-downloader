@@ -29,6 +29,7 @@ from loaders.exceptions import (
     LoaderNotFoundError,
     MediaNotFoundError,
     MimeTypeNotFoundError,
+    PlaylistNotFoundError,
     QualityNotFoundError,
     VideoSourceNotFoundError,
 )
@@ -99,12 +100,12 @@ class LoaderBase(ABC):
             self.speed_limit = kwargs["speed_limit"]
             self.quality = kwargs["quality"]
             self.timeout = kwargs["timeout"]
+            self.playlist = kwargs["playlist"]
             self.exact = kwargs["exact"]
             self.overwrite = kwargs["overwrite"]
             self.logger = logging.getLogger(self.get_logger_name())
 
-            self._ensure_no_file_or_can_overwrite()
-            self._ensure_output_directory_exists()
+            self._ensure_video_output_path_valid()
 
             # Increase resource timing buffer size.
             # The default of 250 is not always enough.
@@ -310,17 +311,36 @@ class LoaderBase(ABC):
             self.output_path = self.output_path.with_suffix(DEFAULT_EXTENSION)
 
     def _ensure_no_file_or_can_overwrite(self) -> None:
-        if self.output_path.suffix and self.output_path.exists() and not self.overwrite:
+        if (
+            self.output_path.exists()
+            and self.output_path.is_file()
+            and not self.overwrite
+        ):
             raise FileExistsNoOverwriteError(self.output_path)
 
-    def _ensure_output_directory_exists(self) -> None:
-        # Use suffix to determine if the path points to a file or a directory.
+    def _ensure_video_output_path_valid(self) -> None:
+        self._ensure_no_file_or_can_overwrite()
+
+        # Use suffix to determine if the path
+        # is intended to point to a file or a directory.
         # This correctly assumes that entries like "folder/.ext" have no suffix,
         # i. e. they are directories.
-        directory = self.output_path
-        if self.output_path.suffix:
-            directory = directory.parent
-        pathlib.Path.mkdir(directory, parents=True, exist_ok=True)
+        path = self.output_path
+        if path.suffix:
+            path = path.parent
+        pathlib.Path.mkdir(path, parents=True, exist_ok=True)
+
+    # TODO: check for intermediary existing elements,
+    # e. g., "path/to/some.stuff/etc"; if "some.stuff" exists, it's gonna break
+    def _ensure_playlist_output_path_valid(self) -> None:
+        self._ensure_no_file_or_can_overwrite()
+
+        # Path is a file and can be overwritten -> remove it and create an empty dir
+        path = self.output_path
+        if path.is_file():
+            path.unlink(missing_ok=True)
+
+        pathlib.Path.mkdir(path, parents=True, exist_ok=True)
 
     def _get_target_quality(self) -> int:
         self.qualities = self.get_qualities()
@@ -376,7 +396,7 @@ class LoaderBase(ABC):
         ...
 
     @abstractmethod
-    def get_playlist(self) -> list[str] | None:
+    def get_playlist_contents(self) -> list[str] | None:
         """Get a list of video URLs from the given playlist."""
         ...
 
@@ -450,8 +470,7 @@ class LoaderBase(ABC):
                 video_with_audio = video.with_audio(audio)
                 output_path = self.output_path
                 try:
-                    self._ensure_output_directory_exists()
-                    self._ensure_no_file_or_can_overwrite()
+                    self._ensure_video_output_path_valid()
                 except FileExistsNoOverwriteError:
                     filename = self._get_title_with_timestamp(output_path.stem)
                     output_path = self.output_path.with_stem(filename)
@@ -465,18 +484,22 @@ class LoaderBase(ABC):
 
                 video_with_audio.write_videofile(output_path)
 
-    def _try_ensure_all(self) -> bool:
+    def _try_ensure_video(self) -> bool:
         try:
             self._ensure_video_accessible()
             self._ensure_filename_present_and_valid()
             self._ensure_extension_present_and_valid()
-            self._ensure_no_file_or_can_overwrite()
+            self._ensure_video_output_path_valid()
         except AccessRestrictedError:
             self.logger.exception("Could not access the video.")
         else:
             return True
 
         return False
+
+    def _try_ensure_playlist(self) -> bool:
+        self._ensure_playlist_output_path_valid()
+        return True
 
     def _check_redirect(self) -> None:
         source_url = self.get_source_url()
@@ -542,22 +565,35 @@ class LoaderBase(ABC):
         except DownloadRequestError:
             self.logger.exception("Could not download files due to a request error.")
 
-    def get(self, url: str, *, check_playlist: bool = True) -> None:
-        """Navigate to ``url``, locate the video and load it."""
+    def _get_playlist(self, url: str) -> None:
         self.driver.get(url)
 
-        # URL points to a playlist -> download all videos.
-        if check_playlist and (playlist := self.get_playlist()):
-            self.logger.info("Found a playlist of %s videos.", len(playlist))
-            for video_url in playlist:
-                self.logger.info("Navigating to %s...", video_url)
+        playlist = self.get_playlist_contents()
+        if not playlist:
+            raise PlaylistNotFoundError(url)
 
-                # Skip subsequent playlist checks.
-                self.get(video_url, check_playlist=False)
-
+        if not self._try_ensure_playlist():
             return
 
-        if not self._try_ensure_all():
+        self.logger.info("Found a playlist of %s videos.", len(playlist))
+        output_path = self.output_path
+        video_num = 1
+        for video_url in playlist:
+            self.logger.info(
+                "Navigating to video #%s at %s...",
+                video_num,
+                video_url,
+            )
+
+            self._get_video(url)
+
+            self.output_path = output_path
+            video_num += 1
+
+    def _get_video(self, url: str) -> None:
+        self.driver.get(url)
+
+        if not self._try_ensure_video():
             return
 
         self._check_redirect()
@@ -568,3 +604,10 @@ class LoaderBase(ABC):
 
         self._try_execute()
         return
+
+    def get(self, url: str) -> None:
+        """Navigate to the provided URL, locate the video or playlist and load it."""
+        if self.playlist:
+            self._get_playlist(url)
+        else:
+            self._get_video(url)
