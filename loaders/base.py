@@ -18,8 +18,8 @@ import requests
 from moviepy import AudioFileClip, VideoFileClip
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import TimeoutException
-from selenium.webdriver.remote.webdriver import WebDriver
 
+from driver import CustomWebDriver
 from loaders.exceptions import (
     AccessRestrictedError,
     DownloadRequestError,
@@ -86,7 +86,7 @@ class MediaSpec:
 class LoaderBase(ABC):
     """Base class for video loader classes."""
 
-    def __init__(self, driver: WebDriver, **kwargs: Any) -> None:
+    def __init__(self, driver: CustomWebDriver, **kwargs: Any) -> None:
         """Create a new instance of the loader class."""
         try:
             self.driver = driver
@@ -94,7 +94,6 @@ class LoaderBase(ABC):
             # Store kwargs for a potential redirect.
             self._kwargs = kwargs
 
-            self.url = kwargs["url"]
             self.output_path = pathlib.Path(kwargs["output_path"])
             self.chunk_size = kwargs["chunk_size"]
             self.speed_limit = kwargs["speed_limit"]
@@ -359,7 +358,7 @@ class LoaderBase(ABC):
             if not request_id:
                 if (
                     method == "Network.requestWillBeSent"
-                    and params["documentURL"] == self.url
+                    and params["documentURL"] == self.driver.url
                 ):
                     request_id = params["requestId"]
             # Then find the first response corresponding to that URL
@@ -485,7 +484,7 @@ class LoaderBase(ABC):
         if not source_url:
             raise VideoSourceNotFoundError
 
-        url_parsed = urlparser.urlparse(self.url)
+        url_parsed = urlparser.urlparse(self.driver.url)
         source_url_parsed = urlparser.urlparse(source_url)
         if url_parsed.netloc != source_url_parsed.netloc:
             self.logger.warning("Redirecting to the video source at %s...", source_url)
@@ -553,8 +552,7 @@ class LoaderBase(ABC):
             for video_url in playlist:
                 self.logger.info("Navigating to %s...", video_url)
 
-                # Update URL and skip subsequent playlist checks.
-                self.url = video_url
+                # Skip subsequent playlist checks.
                 self.get(video_url, check_playlist=False)
 
             return

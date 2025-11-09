@@ -9,11 +9,10 @@ from types import TracebackType
 from typing import Any, TypeVar
 
 import validators
-from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
-from selenium.webdriver.remote.webdriver import WebDriver
 from typing_extensions import override
 
+from driver import CustomWebDriver, get_driver_options
 from exceptions import (
     ArgumentStringError,
     PathNotFoundError,
@@ -248,6 +247,8 @@ ARGSPEC = ArgumentsSpec(
         ),
         type=_validate_speed_limit,
     ),
+    # TODO: also add "min" and "max" values
+    # to download videos in minimum and maximum available qualities
     OptionalArgument(
         "-q",
         "--quality",
@@ -344,10 +345,6 @@ class CustomArgumentParser(argparse.ArgumentParser):
         return super()._parse_known_args(arg_strings, namespace)
 
 
-def _get_driver_class() -> type[WebDriver]:
-    return webdriver.Chrome
-
-
 def _parse_args() -> argparse.Namespace:
     parser = CustomArgumentParser(
         prog=PROGRAM_NAME,
@@ -389,33 +386,6 @@ def _get_logger(name: str | None = None) -> logging.Logger:
     logger.addHandler(_get_log_console_handler())
     logger.addHandler(_get_log_file_handler())
     return logger
-
-
-def _get_chrome_options(
-    *,
-    user_profile: str | None,
-    headless: bool,
-) -> webdriver.ChromeOptions:
-    options = webdriver.ChromeOptions()
-    if user_profile:
-        path = pathlib.Path(user_profile)
-        # options.add_experimental_option("excludeSwitches", CHROME_DEFAULT_SWITCHES)
-        options.add_argument(f"--user-data-dir={path.parent}")
-        options.add_argument(f"--profile-directory={path.name}")
-
-    # Hide browser GUI
-    if headless:
-        options.add_argument("--headless=new")
-
-    options.add_argument("--mute-audio")  # Mute the browser
-    # options.add_argument('--disable-gpu')  # Disable GPU hardware acceleration
-    # options.add_argument('--disable-dev-shm-usage')  # Overcome limited resource problems
-    # options.add_argument('--no-sandbox')  # Bypass OS security model
-    # options.add_argument('--disable-web-security')  # Disable web security
-    # options.add_argument('--allow-running-insecure-content')  # Allow running insecure content
-    # options.add_argument('--disable-webrtc')  # Disable WebRTC
-    options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-    return options
 
 
 def main() -> None:
@@ -463,29 +433,12 @@ def main() -> None:
         logger.info("Exiting...")
         return
 
-    driver_class = _get_driver_class()
-
-    _driver_exit = driver_class.__exit__
-
-    def driver_exit(
-        self: WebDriver,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> None:
-        logger.info("Closing driver...")
-        _driver_exit(self, exc_type, exc, traceback)
-
-    # Replace the original __exit__ with a logging one
-    driver_class.__exit__ = driver_exit
-
-    options = _get_chrome_options(
+    options = get_driver_options(
         user_profile=args.user_profile,
         headless=args.headless,
     )
     try:
-        logger.info("Setting up driver...")
-        with webdriver.Chrome(options=options) as driver:
+        with CustomWebDriver(logger, options=options) as driver:
             loader = None
             try:
                 loader = loader_class(driver=driver, **vars(args))
