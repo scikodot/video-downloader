@@ -303,13 +303,7 @@ ARGSPEC = ArgumentsSpec(
     OptionalArgument(
         "-w",
         "--overwrite",
-        help=(
-            "Overwrite the video file with the same name if it exists.\n"
-            "If the output path is an existing file and '--playlist' is used, "
-            "replace the file with an empty directory having the same name.\n"
-            "If the output path is an existing directory and '--playlist' is used, "
-            "overwrite any file with the same name inside of it if necessary.\n"
-        ),
+        help="Overwrite the existing video file(-s) at the output path.",
         action="store_true",
     ),
     OptionalArgument(

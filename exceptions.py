@@ -2,6 +2,7 @@
 
 import io
 import logging
+import pathlib
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import KW_ONLY, dataclass
@@ -100,7 +101,7 @@ class PathNotFoundError(ParameterizedError):
     def _message(self) -> str:
         return "Path not found: {0}"
 
-    path: str
+    path: pathlib.Path | str
 
 
 @dataclass

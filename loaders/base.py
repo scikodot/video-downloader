@@ -20,6 +20,7 @@ from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import TimeoutException
 
 from driver import CustomWebDriver
+from exceptions import PathNotFoundError
 from loaders.exceptions import (
     AccessRestrictedError,
     DownloadRequestError,
@@ -318,9 +319,37 @@ class LoaderBase(ABC):
         ):
             raise FileExistsNoOverwriteError(self.output_path)
 
-    def _ensure_video_output_path_valid(self) -> None:
-        self._ensure_no_file_or_can_overwrite()
+    def _find_last_existing_path_part(self, path: pathlib.Path) -> pathlib.Path | None:
+        if path.exists():
+            return path
 
+        # Binary search for the last existing part
+        parents = path.parents
+        low, high = 0, len(parents)
+        while low < high - 1:
+            mid = (low + high) // 2
+            parent = parents[mid]
+            if parent.exists():
+                low = mid
+            else:
+                high = mid
+
+        # No parents or none of them exists
+        if low >= high or not parents[low].exists():
+            return None
+
+        return parents[low]
+
+    def _ensure_no_file_exists(self, path: pathlib.Path) -> None:
+        lepp = self._find_last_existing_path_part(path)
+        if not lepp:
+            raise PathNotFoundError(path)
+
+        # LEPP is a file, but it must be a part of a longer path -> conflict
+        if lepp.is_file():
+            raise FileExistsNoOverwriteError(lepp)
+
+    def _ensure_video_output_path_valid(self) -> None:
         # Use suffix to determine if the path
         # is intended to point to a file or a directory.
         # This correctly assumes that entries like "folder/.ext" have no suffix,
@@ -328,17 +357,15 @@ class LoaderBase(ABC):
         path = self.output_path
         if path.suffix:
             path = path.parent
-        pathlib.Path.mkdir(path, parents=True, exist_ok=True)
 
-    # TODO: check for intermediary existing elements,
-    # e. g., "path/to/some.stuff/etc"; if "some.stuff" exists, it's gonna break
-    def _ensure_playlist_output_path_valid(self) -> None:
+        self._ensure_no_file_exists(path)
         self._ensure_no_file_or_can_overwrite()
 
-        # Path is a file and can be overwritten -> remove it and create an empty dir
+        pathlib.Path.mkdir(path, parents=True, exist_ok=True)
+
+    def _ensure_playlist_output_path_valid(self) -> None:
         path = self.output_path
-        if path.is_file():
-            path.unlink(missing_ok=True)
+        self._ensure_no_file_exists(path)
 
         pathlib.Path.mkdir(path, parents=True, exist_ok=True)
 

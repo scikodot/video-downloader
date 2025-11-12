@@ -42,7 +42,10 @@ class AccessRestrictedError(Exception):
 
 
 class FileExistsNoOverwriteError(Exception):
-    """Thrown when the file already exists and ``--overwrite`` flag is not used."""
+    (
+        """Thrown when the file already exists and cannot be overwritten, """
+        """e. g. due to ``--overwrite`` flag absence."""
+    )
 
 
 class MimeTypeNotFoundError(Exception):
