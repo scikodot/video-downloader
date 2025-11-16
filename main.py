@@ -17,6 +17,7 @@ from exceptions import (
     ArgumentStringError,
     PathNotFoundError,
     TooSmallValueError,
+    UnknownStringValueError,
     UrlValidationError,
 )
 from loaders import get_loader_class
@@ -41,6 +42,7 @@ LOGS_SUBPATH = "logs"
 DEFAULT_OUTPUT_SUBPATH = "output"
 DEFAULT_CHUNK_SIZE, MINIMUM_CHUNK_SIZE = 1024, 128
 DEFAULT_QUALITY, MINIMUM_QUALITY = 720, 144
+QUALITY_STRINGS = ["min", "max"]
 DEFAULT_TIMEOUT, MINIMUM_TIMEOUT = 10, 1
 
 
@@ -101,6 +103,27 @@ def _assert_arg_type(t: type[T]) -> Callable[[Callable[[T], T]], Callable[[str],
     return decorator
 
 
+def _assert_arg_type_or_str(
+    t: type[T],
+) -> Callable[[Callable[[T | str], T | str]], Callable[[str], T | str]]:
+    """Assert that the function's argument is convertible to the specified type.
+
+    Same as ``_assert_arg_type`` but allows keeping argument's original ``str`` type
+    if all other conversions fail.
+    """
+
+    def decorator(f: Callable[[T | str], T | str]) -> Callable[[str], T | str]:
+        def wrapper(arg: str) -> T | str:
+            try:
+                return f(t(arg))
+            except ValueError:
+                return f(arg)
+
+        return wrapper
+
+    return decorator
+
+
 @_assert_arg_type(int)
 def _validate_chunk_size(chunk_size: int) -> int:
     if chunk_size < MINIMUM_CHUNK_SIZE:
@@ -126,16 +149,21 @@ def _validate_speed_limit(speed_limit: float) -> float:
     return speed_limit
 
 
-@_assert_arg_type(int)
-def _validate_quality(quality: int) -> int:
-    if quality < MINIMUM_QUALITY:
-        raise TooSmallValueError(
-            quality,
-            lower_bound=MINIMUM_QUALITY,
-            inclusive=True,
-            units="p",
-            indent="",
-        )
+@_assert_arg_type_or_str(int)
+def _validate_quality(quality: int | str) -> int | str:
+    match quality:
+        case int():
+            if quality < MINIMUM_QUALITY:
+                raise TooSmallValueError(
+                    quality,
+                    lower_bound=MINIMUM_QUALITY,
+                    inclusive=True,
+                    units="p",
+                    indent="",
+                )
+        case str():
+            if quality not in QUALITY_STRINGS:
+                raise UnknownStringValueError(quality, QUALITY_STRINGS)
 
     return quality
 
@@ -257,7 +285,10 @@ ARGSPEC = ArgumentsSpec(
             "This parameter determines the exact quality "
             "if used together with '--exact' flag, and a maximum quality otherwise.\n"
             "In the latter case, the first quality value lower than or equal "
-            "to this parameter value will be used."
+            "to this parameter value will be used.\n"
+            "Other available values:\n"
+            "'min' - download the video of the lowest available quality\n"
+            "'max' - download the video of the highest available quality"
         ),
         default=DEFAULT_QUALITY,
         type=_validate_quality,
@@ -296,7 +327,8 @@ ARGSPEC = ArgumentsSpec(
         "--exact",
         help=(
             "Do not load the video in any quality "
-            "if the specified quality is not found."
+            "if the specified quality is not found.\n"
+            "Has no effect if the supplied quality value is non-numeric."
         ),
         action="store_true",
     ),

@@ -120,3 +120,17 @@ class TooSmallValueError(ParameterizedError):
     inclusive: bool
     units: str
     indent: str = " "
+
+
+@dataclass
+class UnknownStringValueError(ParameterizedError):
+    """Thrown when the value is not in the set of known values."""
+
+    @property
+    @override
+    def _message(self) -> str:
+        known_str = ", ".join(f"'{kv}'" for kv in self.known_values)
+        return "Value '{0}' is unknown, must be one of the following: " + known_str
+
+    value: str
+    known_values: list[str]

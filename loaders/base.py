@@ -370,24 +370,38 @@ class LoaderBase(ABC):
         pathlib.Path.mkdir(path, parents=True, exist_ok=True)
 
     def _get_target_quality(self) -> int:
-        self.qualities = self.get_qualities()
-        target_quality = 0
-        for q in self.qualities:
-            if target_quality < q <= self.quality:
-                target_quality = q
-
-        qs = ", ".join(self._get_quality_with_units(q) for q in sorted(self.qualities))
+        self.qualities = sorted(self.get_qualities())
+        qs = ", ".join(map(self._get_quality_with_units, self.qualities))
         self.logger.debug("Qualities: %s", qs)
-        if target_quality < self.quality:
-            if self.exact:
-                raise QualityNotFoundError(self._get_quality_with_units(self.quality))
 
-            self.logger.info(
-                "Could not find quality value %sp. "
-                "Using the nearest lower quality: %sp.",
-                self.quality,
-                target_quality,
+        if self.quality == "min":
+            target_quality = self.qualities[0]
+        elif self.quality == "max":
+            target_quality = self.qualities[-1]
+        else:
+            # Index of the first element greater than self.quality
+            gt_index = next(
+                (
+                    i
+                    for i in range(len(self.qualities))
+                    if self.qualities[i] > self.quality
+                ),
+                len(self.qualities),
             )
+            target_quality = self.qualities[gt_index - 1]
+
+            if target_quality < self.quality:
+                if self.exact:
+                    raise QualityNotFoundError(
+                        self._get_quality_with_units(self.quality),
+                    )
+
+                self.logger.info(
+                    "Could not find quality value %sp. "
+                    "Using the nearest lower quality: %sp.",
+                    self.quality,
+                    target_quality,
+                )
 
         return target_quality
 
