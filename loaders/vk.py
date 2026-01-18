@@ -11,6 +11,7 @@ from lxml import etree
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
+from selenium.webdriver.remote.shadowroot import ShadowRoot
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
@@ -366,6 +367,12 @@ class VkVideoLoader(VkLoader):
 
     domain_url: str = "vkvideo.ru"
 
+    def _get_shadow_root(self) -> ShadowRoot:
+        return self.driver.find_element(
+            By.CSS_SELECTOR,
+            "vk-video-player .shadow-root-container",
+        ).shadow_root
+
     @override
     def get_playlist_contents(self) -> list[str] | None:
         try:
@@ -400,12 +407,13 @@ class VkVideoLoader(VkLoader):
 
         return res
 
+    # TODO: add wait
     @override
     def get_source_url(self) -> str | None:
-        try:
-            source = self.driver.find_element(By.CSS_SELECTOR, "video > source")
-        except NoSuchElementException:
-            return None
+        source = self._get_shadow_root().find_element(
+            By.CSS_SELECTOR,
+            "video > source",
+        )
 
         src = source.get_attribute("src")
         if not src:
@@ -413,6 +421,7 @@ class VkVideoLoader(VkLoader):
 
         return src.removeprefix("blob:")
 
+    # TODO: update
     @override
     def check_restrictions(self) -> str | None:
         # The video is only available for registered users and/or subscribers
@@ -436,14 +445,14 @@ class VkVideoLoader(VkLoader):
 
         return None
 
+    # TODO: add wait
     @override
     def disable_autoplay(self) -> None:
-        autoplay = WebDriverWait(self.driver, self.timeout).until(
-            ec.element_to_be_clickable(
-                (By.CSS_SELECTOR, "div[class~='videoplayer_btn_autoplay']"),
-            ),
+        autoplay = self._get_shadow_root().find_element(
+            By.CSS_SELECTOR,
+            "button[aria-label='Автовоспроизведение']",
         )
-        if autoplay.get_attribute("data-value-checked") == "true":
+        if autoplay.get_attribute("aria-checked") == "true":
             autoplay.click()
 
     @override
@@ -455,77 +464,51 @@ class VkVideoLoader(VkLoader):
         )
         return title.get_attribute("innerText")
 
+    # TODO: add waits
     @override
     def get_qualities(self) -> set[int]:
+        shadow = self._get_shadow_root()
+
         # Click the 'Settings' button
         self.logger.info("Waiting for Settings button to appear...")
-        (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (By.CSS_SELECTOR, "div[class~='videoplayer_btn_settings']"),
-                ),
-            )
-            .click()
+        settings = shadow.find_element(
+            By.CSS_SELECTOR,
+            "button[aria-label='Настройки']",
         )
+        settings.click()
 
         # Click the 'Quality' menu option
         self.logger.info("Waiting for Quality menu option to appear...")
-        (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (
-                        By.CSS_SELECTOR,
-                        "div[class~='videoplayer_settings_menu_list_item_quality']",
-                    ),
-                ),
-            )
-            .click()
-        )
+        quality = shadow.find_element(By.CSS_SELECTOR, "li[aria-label^='Качество']")
+        quality.click()
 
         # Get the list of available qualities
         self.logger.info("Waiting for quality options to appear...")
-        quality_items = (
-            WebDriverWait(self.driver, self.timeout)
-            .until(
-                ec.element_to_be_clickable(
-                    (
-                        By.CSS_SELECTOR,
-                        "div[class~='videoplayer_settings_menu_sublist_item']",
-                    ),
-                ),
-            )
-            .find_element(By.XPATH, "./..")
-            .find_elements(By.CSS_SELECTOR, "div[data-setting='quality']")
-        )
+        qualities = shadow.find_elements(By.CSS_SELECTOR, "li[aria-label$='p']")
 
-        # Filter out the 'Auto' option with value of -1
-        quality_values = (qi.get_attribute("data-value") for qi in quality_items)
-        qualities = (int(qv) for qv in quality_values if qv)
-        return {q for q in qualities if q > 0}
+        return set(qualities)
 
     @override
     def replay(self) -> None:
-        # Here, we first check if the video has ended,
-        # and then locate the replay button to click on it.
         try:
-            video_ui = self.driver.find_element(
+            # First, check if the video has ended.
+            # This would imply the presence of suggestions.
+            suggestions = self.driver.find_element(
                 By.CSS_SELECTOR,
-                "div[class='videoplayer_ui']",
+                "div[class^='SuggestionsContainer']",
             )
-            video_state = video_ui.get_attribute("data-state")
-            if video_state == "ended":
+            if suggestions:
+                # Then, locate the replay button and click on it.
                 try:
-                    replay_button = video_ui.find_element(
+                    replay = self._get_shadow_root().find_element(
                         By.CSS_SELECTOR,
-                        "div[class~='videoplayer_btn_play']",
+                        "button[aria-label='Начать заново']",
                     )
-                    replay_button.click()
+                    replay.click()
                 except NoSuchElementException:
                     self.logger.exception("Could not locate replay button to click.")
         except NoSuchElementException:
-            self.logger.exception("Could not locate video UI element.")
+            self.logger.exception("Could not locate suggestions element.")
 
 
 @final
