@@ -21,7 +21,8 @@ def get_loader_class(url: str) -> tuple[str, type[base.LoaderBase] | None]:
     """Get the corresponding loader class for the specified URL."""
     parsed_url = urlparser.urlparse(url)
     netloc = parsed_url.netloc
-    if netloc.endswith("vkvideo.ru"):
+    # TODO: check vk.ru
+    if netloc.endswith(("vk.com", "vkvideo.ru")):
         return (netloc, vk.VkVideoLoader)
     if netloc.endswith("ok.ru"):
         return (netloc, vk.OkLoader)

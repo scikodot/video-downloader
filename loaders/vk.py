@@ -397,40 +397,36 @@ class CustomElementToBeClickable:
 
 @final
 class VkVideoLoader(VkLoader):
-    """Video loader for vkvideo.ru."""
+    """Video loader for vk.com and vkvideo.ru."""
 
     domain_url: str = "vkvideo.ru"
     _shadow_root_locator: str = "vk-video-player .shadow-root-container"
 
+    # TODO: add scroll to bottom to get all video thumbs
     @override
     def get_playlist_contents(self) -> list[str] | None:
-        try:
-            video_list = self.driver.find_element(
+        video_list = self._wait().until(
+            CustomElementToBeClickable(
                 By.CSS_SELECTOR,
-                "div[id='video_all_list']",
-            )
-        except NoSuchElementException:
-            self.logger.info("Could not find a playlist.")
-            return None
-
-        videos = video_list.find_elements(By.CSS_SELECTOR, "div[id^='video_item_']")
+                "#video_list",
+            ),
+        )
+        videos = video_list.find_elements(
+            By.CSS_SELECTOR,
+            "div[class^='vkitVideoCardThumb']",
+        )
         res, i = [], 1
-        for v in videos:
-            try:
-                a = v.find_element(By.CSS_SELECTOR, "a")
-                href = a.get_attribute("href")
-                if not href:
-                    self.logger.debug(
-                        "Could not find 'href' attribute for video #{i}.",
-                    )
-                    continue
+        for video in videos:
+            href = video.get_attribute("href")
+            if not href:
+                self.logger.debug("Could not find 'href' attribute for video #{i}.")
+                continue
 
-                res.append(self.domain_url + href)
+            # Remove URL params, query and fragment if present
+            href_parsed = urlparser.urlparse(href)
+            href_base = href_parsed._replace(params="", query="", fragment="")
 
-            except NoSuchElementException:
-                self.logger.debug(
-                    "Could not find subelement of type 'a' for video #{i}.",
-                )
+            res.append(href_base)
 
             i += 1
 
@@ -438,6 +434,7 @@ class VkVideoLoader(VkLoader):
 
     @override
     def get_source_url(self) -> str | None:
+        self.logger.info("Waiting for video source to appear...")
         source = self._wait().until(
             CustomElementToBeClickable(
                 By.CSS_SELECTOR,
@@ -488,6 +485,7 @@ class VkVideoLoader(VkLoader):
 
     @override
     def disable_autoplay(self) -> None:
+        self.logger.info("Waiting for Autoplay button to appear...")
         autoplay = self._wait().until(
             CustomElementToBeClickable(
                 By.CSS_SELECTOR,
@@ -500,6 +498,7 @@ class VkVideoLoader(VkLoader):
 
     @override
     def get_title(self) -> str | None:
+        self.logger.info("Waiting for title to appear...")
         title = self._wait().until(
             ec.visibility_of_element_located(
                 (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
@@ -522,14 +521,14 @@ class VkVideoLoader(VkLoader):
 
         # Click the 'Quality' menu option
         self.logger.info("Waiting for Quality menu option to appear...")
-        quality = self._wait().until(
+        quality_option = self._wait().until(
             CustomElementToBeClickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "li[aria-label^='Качество']",
             ),
         )
-        quality.click()
+        quality_option.click()
 
         # Click the 'Other' menu option
         self.logger.info("Waiting for Other menu option to appear...")
@@ -571,6 +570,7 @@ class VkVideoLoader(VkLoader):
             if suggestions:
                 # Then, locate the replay button and click on it.
                 try:
+                    self.logger.info("Waiting for Replay button to appear...")
                     replay = self._wait().until(
                         CustomElementToBeClickable(
                             By.CSS_SELECTOR,
