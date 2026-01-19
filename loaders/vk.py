@@ -11,7 +11,8 @@ from lxml import etree
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.remote.shadowroot import ShadowRoot
+from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
@@ -46,6 +47,9 @@ MPD_QUALITIES = {
 
 class VkLoader(LoaderBase):
     """Base class for VK ecosystem."""
+
+    def _wait(self) -> WebDriverWait:
+        return WebDriverWait(self.driver, self.timeout)
 
     @override
     def get_logger_name(self) -> str:
@@ -361,17 +365,42 @@ class VkLoader(LoaderBase):
         raise TypeError(type(res).__name__)
 
 
+class CustomElementToBeClickable:
+    """Custom waiting condition for the element to be clickable."""
+
+    def __init__(self, by: str, *selectors: str) -> None:
+        """Initialize a new waiting object with the specified selectors.
+
+        The elements matched by the selectors are implied to be separated
+        by shadow roots, so if there are two or more selectors,
+        every element but the last must contain non-null shadow root property.
+        """
+        self.by = by
+        self.selectors = selectors
+
+    def __call__(self, driver: WebDriver) -> WebElement | Literal[False]:
+        """Call to determine if the waiting condition is satisfied."""
+        root = driver
+        for selector in self.selectors[:-1]:
+            root = root.find_element(self.by, selector)
+            if not root:
+                return False
+
+            root = root.shadow_root
+            if not root:
+                return False
+
+        # Ignore ShadowRoot not being WebElement;
+        # it only needs the find_element method (which it has) for this to work.
+        return ec.element_to_be_clickable((self.by, self.selectors[-1]))(root)  # pyright: ignore[reportArgumentType]
+
+
 @final
 class VkVideoLoader(VkLoader):
     """Video loader for vkvideo.ru."""
 
     domain_url: str = "vkvideo.ru"
-
-    def _get_shadow_root(self) -> ShadowRoot:
-        return self.driver.find_element(
-            By.CSS_SELECTOR,
-            "vk-video-player .shadow-root-container",
-        ).shadow_root
+    _shadow_root_locator: str = "vk-video-player .shadow-root-container"
 
     @override
     def get_playlist_contents(self) -> list[str] | None:
@@ -407,12 +436,14 @@ class VkVideoLoader(VkLoader):
 
         return res
 
-    # TODO: add wait
     @override
     def get_source_url(self) -> str | None:
-        source = self._get_shadow_root().find_element(
-            By.CSS_SELECTOR,
-            "video > source",
+        source = self._wait().until(
+            CustomElementToBeClickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "video > source",
+            ),
         )
 
         src = source.get_attribute("src")
@@ -455,53 +486,78 @@ class VkVideoLoader(VkLoader):
 
         return None
 
-    # TODO: add wait
     @override
     def disable_autoplay(self) -> None:
-        autoplay = self._get_shadow_root().find_element(
-            By.CSS_SELECTOR,
-            "button[aria-label='Автовоспроизведение']",
+        autoplay = self._wait().until(
+            CustomElementToBeClickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "button[aria-label='Автовоспроизведение']",
+            ),
         )
         if autoplay.get_attribute("aria-checked") == "true":
             autoplay.click()
 
     @override
     def get_title(self) -> str | None:
-        title = WebDriverWait(self.driver, self.timeout).until(
+        title = self._wait().until(
             ec.visibility_of_element_located(
                 (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
             ),
         )
         return title.get_attribute("innerText")
 
-    # TODO: add waits
     @override
     def get_qualities(self) -> set[int]:
-        shadow = self._get_shadow_root()
-
         # Click the 'Settings' button
         self.logger.info("Waiting for Settings button to appear...")
-        settings = shadow.find_element(
-            By.CSS_SELECTOR,
-            "button[aria-label='Настройки']",
+        settings = self._wait().until(
+            CustomElementToBeClickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "button[aria-label='Настройки']",
+            ),
         )
         settings.click()
 
         # Click the 'Quality' menu option
         self.logger.info("Waiting for Quality menu option to appear...")
-        quality = shadow.find_element(By.CSS_SELECTOR, "li[aria-label^='Качество']")
+        quality = self._wait().until(
+            CustomElementToBeClickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "li[aria-label^='Качество']",
+            ),
+        )
         quality.click()
 
         # Click the 'Other' menu option
         self.logger.info("Waiting for Other menu option to appear...")
-        quality_other = shadow.find_element(By.CSS_SELECTOR, "li[aria-label='Другое']")
+        quality_other = self._wait().until(
+            CustomElementToBeClickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "li[aria-label='Другое']",
+            ),
+        )
         quality_other.click()
 
         # Get the list of available qualities
         self.logger.info("Waiting for quality options to appear...")
-        qualities = shadow.find_elements(By.CSS_SELECTOR, "li[aria-label$='p']")
+        quality_items = (
+            self._wait()
+            .until(
+                CustomElementToBeClickable(
+                    By.CSS_SELECTOR,
+                    self._shadow_root_locator,
+                    "div[data-testid='quality-other-settings-sub-menu']",
+                ),
+            )
+            .find_elements(By.CSS_SELECTOR, "li[data-value$='p']")
+        )
+        qualities = (qi.get_attribute("data-value") for qi in quality_items)
 
-        return set(qualities)
+        return {int(q[:-1]) for q in qualities if q}
 
     @override
     def replay(self) -> None:
@@ -515,9 +571,12 @@ class VkVideoLoader(VkLoader):
             if suggestions:
                 # Then, locate the replay button and click on it.
                 try:
-                    replay = self._get_shadow_root().find_element(
-                        By.CSS_SELECTOR,
-                        "button[aria-label='Начать заново']",
+                    replay = self._wait().until(
+                        CustomElementToBeClickable(
+                            By.CSS_SELECTOR,
+                            self._shadow_root_locator,
+                            "button[aria-label='Начать заново']",
+                        ),
                     )
                     replay.click()
                 except NoSuchElementException:
