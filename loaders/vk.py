@@ -421,16 +421,26 @@ class VkVideoLoader(VkLoader):
 
         return src.removeprefix("blob:")
 
-    # TODO: update
     @override
     def check_restrictions(self) -> str | None:
-        # The video is only available for registered users and/or subscribers
+        # The video is only available to registered users
         try:
-            placeholder = self.driver.find_element(
+            message = self.driver.find_element(
                 By.CSS_SELECTOR,
-                "div[data-testid='placeholder_description']",
+                "span[class^='vkuiPlaceholder']",
             )
-            return placeholder.get_attribute("innerText")
+            return message.get_attribute("innerText")
+        except NoSuchElementException:
+            pass
+
+        # The video is only available for subscribers
+        try:
+            overlay = self.driver.find_element(
+                By.CSS_SELECTOR,
+                "div[class^='vkitVideoCardRestrictionOverlay']",
+            )
+            message = overlay.find_element(By.CSS_SELECTOR, "div > span")
+            return message.get_attribute("innerText")
         except NoSuchElementException:
             pass
 
@@ -481,6 +491,11 @@ class VkVideoLoader(VkLoader):
         self.logger.info("Waiting for Quality menu option to appear...")
         quality = shadow.find_element(By.CSS_SELECTOR, "li[aria-label^='Качество']")
         quality.click()
+
+        # Click the 'Other' menu option
+        self.logger.info("Waiting for Other menu option to appear...")
+        quality_other = shadow.find_element(By.CSS_SELECTOR, "li[aria-label='Другое']")
+        quality_other.click()
 
         # Get the list of available qualities
         self.logger.info("Waiting for quality options to appear...")
