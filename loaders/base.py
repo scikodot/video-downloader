@@ -586,7 +586,7 @@ class LoaderBase(ABC):
         url_parsed = urlparser.urlparse(self.driver.url)
         source_url_parsed = urlparser.urlparse(source_url)
         if url_parsed.netloc != source_url_parsed.netloc:
-            self.logger.warning("Redirecting to the video source at %s...", source_url)
+            self.logger.info("Redirecting to the video source at %s...", source_url)
             self._redirect(source_url)
 
     def _redirect(self, url: str) -> None:

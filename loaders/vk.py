@@ -410,25 +410,54 @@ class VkVideoLoader(VkLoader):
 
     @override
     def get_source_url(self) -> str | None:
-        self.logger.info("Waiting for video to appear...")
-        source = (
-            self._wait()
-            .until(
-                CustomEC.element_to_be_clickable(
-                    By.CSS_SELECTOR,
-                    self._shadow_root_locator,
-                    "video",
-                ),
-                message="No video found.",
-            )
-            .find_element(By.CSS_SELECTOR, "source")
+        self.logger.info("Waiting for videoplayer to appear...")
+        player = self._wait().until(
+            # Native VK player
+            lambda drv: CustomEC.element_to_be_clickable(
+                By.CSS_SELECTOR,
+                self._shadow_root_locator,
+                "video",
+            )(drv)
+            # Embedded YouTube player
+            or CustomEC.element_to_be_clickable(
+                By.CSS_SELECTOR,
+                "iframe.video_yt_player",
+            )(drv),
+            message="No videoplayer found.",
         )
 
-        src = source.get_attribute("src")
-        if not src:
-            return None
+        cls = player.get_attribute("class")
+        match cls:
+            # VK
+            case "player-media":
+                source = player.find_element(By.CSS_SELECTOR, "source")
+                src = source.get_attribute("src")
+                if not src:
+                    return None
 
-        return src.removeprefix("blob:")
+                return src.removeprefix("blob:")
+
+            # YT
+            case "video_yt_player":
+                src_embed = player.get_attribute("src")
+                if not src_embed:
+                    return None
+
+                # Transform the embedding link into a normal YT video URL
+                src_parsed = urlparser.urlparse(src_embed)
+                video_id = src_parsed.path.replace("/embed/", "")
+                src_parsed = src_parsed._replace(
+                    path="/watch",
+                    params="",
+                    query=f"v={video_id}",
+                    fragment="",
+                )
+
+                return src_parsed.geturl()
+
+            # Unknown player
+            case _:
+                return None
 
     @override
     def check_restrictions(self) -> str | None:

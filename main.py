@@ -276,8 +276,6 @@ ARGSPEC = ArgumentsSpec(
         ),
         type=_validate_speed_limit,
     ),
-    # TODO: also add "min" and "max" values
-    # to download videos in minimum and maximum available qualities
     OptionalArgument(
         "-q",
         "--quality",
