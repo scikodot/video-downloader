@@ -3,7 +3,7 @@
 import pathlib
 import urllib.parse as urlparser
 from abc import abstractmethod
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from typing import Literal, final
 
 import requests
@@ -11,8 +11,6 @@ from lxml import etree
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
-from selenium.webdriver.remote.webdriver import WebDriver
-from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
@@ -28,7 +26,7 @@ from loaders.exceptions import (
     MediaNotFoundError,
     MimeTypeNotFoundError,
 )
-from loaders.utils import MediaType, MpdElement
+from loaders.utils import CustomEC, MediaType, MpdElement
 
 HTTP_BLOCKED = 451
 HTTP_BLOCKED_NAME = "Unavailable For Legal Reasons"
@@ -363,39 +361,6 @@ class VkLoader(LoaderBase):
             return self._get_media_from_types_map(res, session, directory)
 
         raise TypeError(type(res).__name__)
-
-
-class CustomEC:
-    """Custom expected conditions."""
-
-    @staticmethod
-    def element_to_be_clickable(
-        by: str,
-        *selectors: str,
-    ) -> Callable[[WebDriver], WebElement | Literal[False]]:
-        """Determine if the element is clickable.
-
-        The elements matched by the selectors are implied to be separated
-        by shadow roots, so if there are two or more selectors,
-        every element but the last must contain non-null shadow root property.
-        """
-
-        def predicate(driver: WebDriver) -> WebElement | Literal[False]:
-            root = driver
-            for selector in selectors[:-1]:
-                root = root.find_element(by, selector)
-                if not root:
-                    return False
-
-                root = root.shadow_root
-                if not root:
-                    return False
-
-            # Ignore ShadowRoot not being WebElement;
-            # it only needs the find_element method (which it has) for this to work.
-            return ec.element_to_be_clickable((by, selectors[-1]))(root)  # pyright: ignore[reportArgumentType]
-
-        return predicate
 
 
 @final
