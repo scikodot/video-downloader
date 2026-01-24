@@ -66,3 +66,16 @@ class AmbiguousUrlsError(Exception):
 
 class InvalidMpdError(Exception):
     """Thrown when the provided Media Presentation Document (MPD) is malformed."""
+
+
+@dataclass
+class DocumentScrollError(ParameterizedError):
+    """Thrown when the performed scroll operation returned an unusual result."""
+
+    @property
+    @override
+    def _message(self) -> str:
+        return "Scrolled to height {0} but got new height {1}."
+
+    height_old: int
+    height_new: int

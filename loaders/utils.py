@@ -350,13 +350,13 @@ class CustomEC:
         return predicate
 
     @staticmethod
-    def scroll_height_updated(
+    def document_scroll_height_updated(
         height: int,
     ) -> Callable[[WebDriver], int | Literal[False]]:
         """Determine if the document's scroll height is updated."""
 
         def predicate(driver: WebDriver) -> int | Literal[False]:
-            new_height = driver.execute_script("return document.body.scrollHeight;")
-            return new_height if new_height != height else False
+            height_new = driver.execute_script("return document.body.scrollHeight;")
+            return height_new if height_new != height else False
 
         return predicate

@@ -12,7 +12,6 @@ from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
-from selenium.webdriver.support.wait import WebDriverWait
 from typing_extensions import override
 
 import constants
@@ -45,9 +44,6 @@ MPD_QUALITIES = {
 
 class VkLoader(LoaderBase):
     """Base class for VK ecosystem."""
-
-    def _wait(self) -> WebDriverWait:
-        return WebDriverWait(self.driver, self.timeout)
 
     @override
     def get_logger_name(self) -> str:
@@ -352,7 +348,7 @@ class VkLoader(LoaderBase):
         session: requests.Session,
         directory: pathlib.Path,
     ) -> MediaSpec:
-        res = WebDriverWait(self.driver, self.timeout).until(
+        res = self._wait().until(
             lambda _: self._get_urls_from_network_logs(),
         )
         if isinstance(res, str):
@@ -370,7 +366,6 @@ class VkVideoLoader(VkLoader):
     domain_url: str = "vkvideo.ru"
     _shadow_root_locator: str = "vk-video-player .shadow-root-container"
 
-    # TODO: add scroll to bottom to get all video thumbs
     @override
     def get_playlist_contents(self) -> list[str] | None:
         video_list = self._wait().until(
@@ -379,6 +374,10 @@ class VkVideoLoader(VkLoader):
                 "#video_list",
             ),
         )
+
+        # Scroll to bottom to get all the video thumbnails
+        self._scroll_to_bottom()
+
         videos = video_list.find_elements(
             By.CSS_SELECTOR,
             "div[class^='vkitVideoCardThumb']",

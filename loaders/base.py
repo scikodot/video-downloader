@@ -18,11 +18,13 @@ import requests
 from moviepy import AudioFileClip, VideoFileClip
 from moviepy.video.io.ffmpeg_reader import ffmpeg_parse_infos
 from selenium.common import TimeoutException
+from selenium.webdriver.support.wait import WebDriverWait
 
 from driver import CustomWebDriver
 from exceptions import PathNotFoundError
 from loaders.exceptions import (
     AccessRestrictedError,
+    DocumentScrollError,
     DownloadRequestError,
     FileExistsNoOverwriteError,
     InvalidMimeTypeError,
@@ -34,7 +36,12 @@ from loaders.exceptions import (
     QualityNotFoundError,
     VideoSourceNotFoundError,
 )
-from loaders.utils import LimitedResponse, LimitedResponseOptions, get_current_timestamp
+from loaders.utils import (
+    CustomEC,
+    LimitedResponse,
+    LimitedResponseOptions,
+    get_current_timestamp,
+)
 
 DEFAULT_CHROME_SWITCHES = [
     "allow-pre-commit-input",
@@ -122,6 +129,34 @@ class LoaderBase(ABC):
         except Exception:
             self.logger.error("Loader initialization failed.")  # noqa: TRY400
             raise
+
+    def _wait(self) -> WebDriverWait:
+        return WebDriverWait(self.driver, self.timeout)
+
+    def _scroll_to_bottom(self) -> None:
+        # Get the current document scroll height
+        height = self.driver.execute_script("return document.body.scrollHeight;")
+
+        while True:
+            try:
+                # Scroll to the current bottom
+                self.driver.execute_script("window.scrollTo(0, arguments[0]);", height)
+
+                # Wait for the scroll height to change
+                height_new = self._wait().until(
+                    CustomEC.document_scroll_height_updated(height),
+                )
+
+                # Height did not increase -> something went wrong
+                if height_new <= height:
+                    raise DocumentScrollError(height, height_new)
+
+                # Update the current height
+                height = height_new
+
+            except TimeoutException:
+                # Height did not change -> the absolute bottom is reached
+                break
 
     def _get_quality_with_units(self, quality: int) -> str:
         return f"{quality}p"
