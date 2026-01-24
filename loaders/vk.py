@@ -403,14 +403,18 @@ class VkVideoLoader(VkLoader):
 
     @override
     def get_source_url(self) -> str | None:
-        self.logger.info("Waiting for video source to appear...")
-        source = self._wait().until(
-            CustomEC.element_to_be_clickable(
-                By.CSS_SELECTOR,
-                self._shadow_root_locator,
-                "video > source",
-            ),
-            message="No video source found.",
+        self.logger.info("Waiting for video to appear...")
+        source = (
+            self._wait()
+            .until(
+                CustomEC.element_to_be_clickable(
+                    By.CSS_SELECTOR,
+                    self._shadow_root_locator,
+                    "video",
+                ),
+                message="No video found.",
+            )
+            .find_element(By.CSS_SELECTOR, "source")
         )
 
         src = source.get_attribute("src")
