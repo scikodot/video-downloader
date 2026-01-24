@@ -388,7 +388,14 @@ class VkVideoLoader(VkLoader):
         for video in videos:
             href = video.get_attribute("href")
             if not href:
-                self.logger.debug("Could not find 'href' attribute for video #{i}.")
+                restriction = video.find_element(
+                    By.CSS_SELECTOR,
+                    "div[class^='vkitVideoCardRestrictionOverlay']",
+                )
+                if restriction:
+                    self.logger.info("Video #%s is blocked.", i)
+                else:
+                    self.logger.debug("No 'href' attribute found for video #%s.", i)
                 continue
 
             # Remove URL params, query and fragment if present
