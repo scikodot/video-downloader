@@ -3,7 +3,7 @@
 import pathlib
 import urllib.parse as urlparser
 from abc import abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Literal, final
 
 import requests
@@ -365,34 +365,37 @@ class VkLoader(LoaderBase):
         raise TypeError(type(res).__name__)
 
 
-class CustomElementToBeClickable:
-    """Custom waiting condition for the element to be clickable."""
+class CustomEC:
+    """Custom expected conditions."""
 
-    def __init__(self, by: str, *selectors: str) -> None:
-        """Initialize a new waiting object with the specified selectors.
+    @staticmethod
+    def element_to_be_clickable(
+        by: str,
+        *selectors: str,
+    ) -> Callable[[WebDriver], WebElement | Literal[False]]:
+        """Determine if the element is clickable.
 
         The elements matched by the selectors are implied to be separated
         by shadow roots, so if there are two or more selectors,
         every element but the last must contain non-null shadow root property.
         """
-        self.by = by
-        self.selectors = selectors
 
-    def __call__(self, driver: WebDriver) -> WebElement | Literal[False]:
-        """Call to determine if the waiting condition is satisfied."""
-        root = driver
-        for selector in self.selectors[:-1]:
-            root = root.find_element(self.by, selector)
-            if not root:
-                return False
+        def predicate(driver: WebDriver) -> WebElement | Literal[False]:
+            root = driver
+            for selector in selectors[:-1]:
+                root = root.find_element(by, selector)
+                if not root:
+                    return False
 
-            root = root.shadow_root
-            if not root:
-                return False
+                root = root.shadow_root
+                if not root:
+                    return False
 
-        # Ignore ShadowRoot not being WebElement;
-        # it only needs the find_element method (which it has) for this to work.
-        return ec.element_to_be_clickable((self.by, self.selectors[-1]))(root)  # pyright: ignore[reportArgumentType]
+            # Ignore ShadowRoot not being WebElement;
+            # it only needs the find_element method (which it has) for this to work.
+            return ec.element_to_be_clickable((by, selectors[-1]))(root)  # pyright: ignore[reportArgumentType]
+
+        return predicate
 
 
 @final
@@ -406,7 +409,7 @@ class VkVideoLoader(VkLoader):
     @override
     def get_playlist_contents(self) -> list[str] | None:
         video_list = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 "#video_list",
             ),
@@ -436,7 +439,7 @@ class VkVideoLoader(VkLoader):
     def get_source_url(self) -> str | None:
         self.logger.info("Waiting for video source to appear...")
         source = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "video > source",
@@ -487,7 +490,7 @@ class VkVideoLoader(VkLoader):
     def disable_autoplay(self) -> None:
         self.logger.info("Waiting for Autoplay button to appear...")
         autoplay = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "button[aria-label='Автовоспроизведение']",
@@ -511,7 +514,7 @@ class VkVideoLoader(VkLoader):
         # Click the 'Settings' button
         self.logger.info("Waiting for Settings button to appear...")
         settings = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "button[aria-label='Настройки']",
@@ -522,7 +525,7 @@ class VkVideoLoader(VkLoader):
         # Click the 'Quality' menu option
         self.logger.info("Waiting for Quality menu option to appear...")
         quality_option = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "li[aria-label^='Качество']",
@@ -533,7 +536,7 @@ class VkVideoLoader(VkLoader):
         # Click the 'Other' menu option
         self.logger.info("Waiting for Other menu option to appear...")
         quality_other = self._wait().until(
-            CustomElementToBeClickable(
+            CustomEC.element_to_be_clickable(
                 By.CSS_SELECTOR,
                 self._shadow_root_locator,
                 "li[aria-label='Другое']",
@@ -546,7 +549,7 @@ class VkVideoLoader(VkLoader):
         quality_items = (
             self._wait()
             .until(
-                CustomElementToBeClickable(
+                CustomEC.element_to_be_clickable(
                     By.CSS_SELECTOR,
                     self._shadow_root_locator,
                     "div[data-testid='quality-other-settings-sub-menu']",
@@ -572,7 +575,7 @@ class VkVideoLoader(VkLoader):
                 try:
                     self.logger.info("Waiting for Replay button to appear...")
                     replay = self._wait().until(
-                        CustomElementToBeClickable(
+                        CustomEC.element_to_be_clickable(
                             By.CSS_SELECTOR,
                             self._shadow_root_locator,
                             "button[aria-label='Начать заново']",
