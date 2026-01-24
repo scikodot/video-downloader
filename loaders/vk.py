@@ -348,15 +348,16 @@ class VkLoader(LoaderBase):
         session: requests.Session,
         directory: pathlib.Path,
     ) -> MediaSpec:
-        res = self._wait().until(
+        urls = self._wait().until(
             lambda _: self._get_urls_from_network_logs(),
+            message="No direct URLs found.",
         )
-        if isinstance(res, str):
-            return self._get_media_from_mpd(res, session, directory)
-        if isinstance(res, dict):
-            return self._get_media_from_types_map(res, session, directory)
+        if isinstance(urls, str):
+            return self._get_media_from_mpd(urls, session, directory)
+        if isinstance(urls, dict):
+            return self._get_media_from_types_map(urls, session, directory)
 
-        raise TypeError(type(res).__name__)
+        raise TypeError(type(urls).__name__)
 
 
 @final
@@ -373,6 +374,7 @@ class VkVideoLoader(VkLoader):
                 By.CSS_SELECTOR,
                 "#video_list",
             ),
+            message="No playlist contents found.",
         )
 
         # Scroll to bottom to get all the video thumbnails
@@ -408,6 +410,7 @@ class VkVideoLoader(VkLoader):
                 self._shadow_root_locator,
                 "video > source",
             ),
+            message="No video source found.",
         )
 
         src = source.get_attribute("src")
@@ -459,6 +462,7 @@ class VkVideoLoader(VkLoader):
                 self._shadow_root_locator,
                 "button[aria-label='Автовоспроизведение']",
             ),
+            message="No Autoplay buton found.",
         )
         if autoplay.get_attribute("aria-checked") == "true":
             autoplay.click()
@@ -470,6 +474,7 @@ class VkVideoLoader(VkLoader):
             ec.visibility_of_element_located(
                 (By.CSS_SELECTOR, "div[data-testid='video_modal_title']"),
             ),
+            message="No video title found.",
         )
         return title.get_attribute("innerText")
 
@@ -483,6 +488,7 @@ class VkVideoLoader(VkLoader):
                 self._shadow_root_locator,
                 "button[aria-label='Настройки']",
             ),
+            message="No Settings button found.",
         )
         settings.click()
 
@@ -494,6 +500,7 @@ class VkVideoLoader(VkLoader):
                 self._shadow_root_locator,
                 "li[aria-label^='Качество']",
             ),
+            message="No Quality menu option found.",
         )
         quality_option.click()
 
@@ -505,6 +512,7 @@ class VkVideoLoader(VkLoader):
                 self._shadow_root_locator,
                 "li[aria-label='Другое']",
             ),
+            message="No Other menu option found.",
         )
         quality_other.click()
 
@@ -518,6 +526,7 @@ class VkVideoLoader(VkLoader):
                     self._shadow_root_locator,
                     "div[data-testid='quality-other-settings-sub-menu']",
                 ),
+                message="No quality options found.",
             )
             .find_elements(By.CSS_SELECTOR, "li[data-value$='p']")
         )
@@ -544,6 +553,7 @@ class VkVideoLoader(VkLoader):
                             self._shadow_root_locator,
                             "button[aria-label='Начать заново']",
                         ),
+                        message="No Replay button found.",
                     )
                     replay.click()
                 except NoSuchElementException:

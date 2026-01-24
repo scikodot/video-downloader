@@ -9,6 +9,7 @@ from types import TracebackType
 from typing import Any, TypeVar
 
 import validators
+from selenium.common import TimeoutException
 from selenium.common.exceptions import WebDriverException
 from typing_extensions import override
 
@@ -490,6 +491,8 @@ def main() -> None:
                     "Cannot save the video to the already existing file. "
                     "Use '--overwrite' argument to be able to overwrite it.",
                 )
+            except TimeoutException:
+                logger.exception("Operation timed out.")
     except WebDriverException:
         logger.exception("Driver error has occured.")
 
