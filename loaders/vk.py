@@ -377,15 +377,22 @@ class VkVideoLoader(VkLoader):
             message="No playlist contents found.",
         )
 
+        # TODO: for playlists with many videos it is better to download them in batches:
+        # - download the 1st batch, scroll to the 2nd
+        # - download the 2nd batch, scroll to the 3rd
+        # and so on.
+
         # Scroll to bottom to get all the video thumbnails
         self._scroll_to_bottom()
 
+        # Available videos are <a>'s, restricted videos are <div>'s
         videos = video_list.find_elements(
             By.CSS_SELECTOR,
-            "div[class^='vkitVideoCardThumb']",
+            "a[class^='vkitVideoCardThumb'], div[class^='vkitVideoCardThumb']",
         )
-        res, i = [], 1
+        res, i = [], 0
         for video in videos:
+            i += 1
             href = video.get_attribute("href")
             if not href:
                 restriction = video.find_element(
@@ -402,28 +409,28 @@ class VkVideoLoader(VkLoader):
             href_parsed = urlparser.urlparse(href)
             href_base = href_parsed._replace(params="", query="", fragment="")
 
-            res.append(href_base)
-
-            i += 1
+            res.append(href_base.geturl())
 
         return res
 
     @override
     def get_source_url(self) -> str | None:
-        self.logger.info("Waiting for videoplayer to appear...")
+        self.logger.info("Waiting for video player to appear...")
         player = self._wait().until(
-            # Native VK player
-            lambda drv: CustomEC.element_to_be_clickable(
-                By.CSS_SELECTOR,
-                self._shadow_root_locator,
-                "video",
-            )(drv)
-            # Embedded YouTube player
-            or CustomEC.element_to_be_clickable(
-                By.CSS_SELECTOR,
-                "iframe.video_yt_player",
-            )(drv),
-            message="No videoplayer found.",
+            lambda drv: (
+                # Native VK player
+                CustomEC.element_to_be_clickable(
+                    By.CSS_SELECTOR,
+                    self._shadow_root_locator,
+                    "video",
+                )(drv)
+                # Embedded YouTube player
+                or CustomEC.element_to_be_clickable(
+                    By.CSS_SELECTOR,
+                    "iframe.video_yt_player",
+                )(drv)
+            ),
+            message="No video player found.",
         )
 
         cls = player.get_attribute("class")
@@ -465,7 +472,7 @@ class VkVideoLoader(VkLoader):
         try:
             message = self.driver.find_element(
                 By.CSS_SELECTOR,
-                "span[class^='vkuiPlaceholder']",
+                "div[class^='vkitPlaceholder'] > span[class^='vkuiPlaceholder']",
             )
             return message.get_attribute("innerText")
         except NoSuchElementException:

@@ -10,6 +10,7 @@ from typing import Any, Literal, Self, TypeVar
 
 from lxml import etree
 from requests import Response
+from selenium.common import NoSuchElementException, NoSuchShadowRootException
 from selenium.webdriver.remote.webdriver import WebDriver
 from selenium.webdriver.remote.webelement import WebElement
 from selenium.webdriver.support import expected_conditions as ec
@@ -335,12 +336,18 @@ class CustomEC:
         def predicate(driver: WebDriver) -> WebElement | Literal[False]:
             root = driver
             for selector in selectors[:-1]:
-                root = root.find_element(by, selector)
-                if not root:
+                try:
+                    root = root.find_element(by, selector)
+                    if not root:
+                        return False
+                except NoSuchElementException:
                     return False
 
-                root = root.shadow_root
-                if not root:
+                try:
+                    root = root.shadow_root
+                    if not root:
+                        return False
+                except NoSuchShadowRootException:
                     return False
 
             # Ignore ShadowRoot not being WebElement;

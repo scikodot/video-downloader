@@ -484,6 +484,8 @@ def main() -> None:
                 loader = loader_class(driver=driver, **vars(args))
                 logger.info("Navigating to %s...", args.url)
                 loader.get(args.url)
+            # TODO: inherit all loaders exceptions from a base LoaderException
+            # and catch the base one here
             except FileExistsNoOverwriteError:
                 logger.exception(
                     "Cannot save the video to the already existing file. "

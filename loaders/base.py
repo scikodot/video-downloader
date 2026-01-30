@@ -140,6 +140,7 @@ class LoaderBase(ABC):
         while True:
             try:
                 # Scroll to the current bottom
+                self.logger.debug("Scrolling to h=%s...", height)
                 self.driver.execute_script("window.scrollTo(0, arguments[0]);", height)
 
                 # Wait for the scroll height to change
@@ -661,7 +662,8 @@ class LoaderBase(ABC):
                 video_url,
             )
 
-            self._get_video(url)
+            # TODO: catch exceptions to not stop playlist download if errors appear
+            self._get_video(video_url)
 
             self.output_path = output_path
             video_num += 1
