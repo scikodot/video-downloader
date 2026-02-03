@@ -662,8 +662,10 @@ class LoaderBase(ABC):
                 video_url,
             )
 
-            # TODO: catch exceptions to not stop playlist download if errors appear
-            self._get_video(video_url)
+            try:
+                self._get_video(video_url)
+            except Exception:
+                self.logger.exception("Could not load video at %s.", video_url)
 
             self.output_path = output_path
             video_num += 1
