@@ -606,7 +606,7 @@ class VkVideoLoader(VkLoader):
                 except NoSuchElementException:
                     self.logger.exception("Could not locate replay button to click.")
         except NoSuchElementException:
-            self.logger.exception("Could not locate suggestions element.")
+            self.logger.debug("Could not locate suggestions element.")
 
 
 @final
