@@ -418,6 +418,7 @@ def _get_log_console_handler() -> logging.Handler:
 def _get_log_file_handler() -> logging.Handler:
     handler = logging.FileHandler(
         get_logs_path() / f"log_{_log_timestamp}.txt",
+        encoding="utf8",
         delay=True,
     )
     handler.setFormatter(_log_formatter)
