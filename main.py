@@ -16,6 +16,7 @@ from typing_extensions import override
 from driver import CustomWebDriver, get_driver_options
 from exceptions import (
     ArgumentStringError,
+    ExceptionFormatter,
     PathNotFoundError,
     TooSmallValueError,
     UnknownStringValueError,
@@ -402,7 +403,10 @@ def _parse_args() -> argparse.Namespace:
 
 
 _log_timestamp = get_current_timestamp()
-_log_formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+_log_formatter = ExceptionFormatter(
+    "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    stacktrace=False,
+)
 
 
 def _get_log_console_handler() -> logging.Handler:

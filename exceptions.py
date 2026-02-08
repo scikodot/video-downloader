@@ -6,39 +6,35 @@ import pathlib
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import KW_ONLY, dataclass
+from typing import Any
 
 from typing_extensions import override
 
 
 class ExceptionFormatter(logging.Formatter):
-    """Custom formatter for logging exceptions without stacktrace."""
+    """Custom formatter for logging exceptions without a stacktrace."""
+
+    @override
+    def __init__(
+        self,
+        *args: Any,
+        stacktrace: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        self._stacktrace = stacktrace
+        super().__init__(*args, **kwargs)
 
     @override
     def formatException(self, ei: tuple) -> str:
         sio = io.StringIO()
-        # Setting limit=0 prints exception without stacktrace.
-        traceback.print_exception(ei[0], ei[1], ei[2], limit=0, file=sio)
+        traceback.print_exception(ei[0], ei[1], ei[2], file=sio)
         s = sio.getvalue()
         sio.close()
 
-        # Also strip the exception message of the traceback if it is present.
-        if (pos := s.find("Traceback")) > 0:
-            s = s[:pos]
-        if (pos := s.find("Stacktrace")) > 0:
+        # Strip the exception message of the stacktrace if it is present
+        if not self._stacktrace and (pos := s.find("Stacktrace")) > 0:
             s = s[:pos]
 
-        if s[-1] == "\n":
-            s = s[:-1]
-        return f" | {s}"
-
-    @override
-    def format(self, record: logging.LogRecord) -> str:
-        s = super().format(record)
-        s = s.replace("\n", "")
-        # Disable caching exception info as that would prevent
-        # other formatters from getting its stacktrace.
-        if record.exc_text:
-            record.exc_text = None
         return s
 
 
